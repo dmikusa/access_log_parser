@@ -1,0 +1,10 @@
+[package]
+name = "access_log_parser"
+version = "0.1.0"
+authors = ["Daniel Mikusa <dmikusa@pivotal.io>"]
+edition = "2018"
+
+[dependencies]
+nom = "^4.0"
+chrono = "^0.4"
+http = "^0.1"
