@@ -1,7 +1,7 @@
 #[macro_use]
 extern crate nom;
 use chrono::prelude::*;
-use std::net::Ipv4Addr;
+use std::net::{Ipv4Addr, Ipv6Addr, IpAddr};
 use std::str;
 use std::str::FromStr;
 use http;
@@ -10,6 +10,20 @@ named!(parse_ipv4 <&str, Ipv4Addr>,
     map_res!(
         take_until_and_consume!(" "),
         |s: &str| s.parse()
+    )
+);
+
+named!(parse_ipv6 <&str, Ipv6Addr>,
+    map_res!(
+        take_until_and_consume!(" "),
+        |s: &str| s.parse()
+    )
+);
+
+named!(parse_ip <&str, IpAddr>,
+    alt!(
+        parse_ipv4 => { |ip:Ipv4Addr| IpAddr::V4(ip) } |
+        parse_ipv6 => { |ip:Ipv6Addr| IpAddr::V6(ip) }
     )
 );
 
@@ -24,17 +38,27 @@ named!(parse_date <&str, DateTime<FixedOffset>>,
     )
 );
 
-named!(parse_identd_user <&str, Option<&str>>,
+named!(parse_identd_user <&str, Option<String>>,
     alt!(
         tag!("- ") => { |_| None } |
-        opt!(take_until_and_consume!(" "))
+        opt!(
+            map!(
+                take_until_and_consume!(" "),
+                |u| u.into()
+            )
+        )
     )
 );
 
-named!(parse_user <&str, Option<&str>>,
+named!(parse_user <&str, Option<String>>,
     alt!(
         tag!("- ") => { |_| None } |
-        opt!(take_until_and_consume!(" "))
+        opt!(
+            map!(
+                take_until_and_consume!(" "),
+                |u| u.into()
+            )
+        )
     )
 );
 
@@ -95,28 +119,31 @@ named!(parse_referrer <&str, Option<http::Uri>>,
     )
 );
 
-named!(parse_user_agent <&str, &str>,
-    delimited!(
-        tag!(r#"""#),
-        take_until!(r#"""#),
-        tag!(r#"""#)
+named!(parse_user_agent <&str, String>,
+    map!(
+        delimited!(
+            tag!(r#"""#),
+            take_until!(r#"""#),
+            tag!(r#"""#)
+        ),
+        |ua| ua.into()
     )
 );
 
 #[derive(Debug)]
-pub struct CommonLogEntry<'a> {
-    pub ip: Ipv4Addr,
-    pub identd_user: Option<&'a str>,
-    pub user: Option<&'a str>,
+pub struct CommonLogEntry {
+    pub ip: IpAddr,
+    pub identd_user: Option<String>,
+    pub user: Option<String>,
     pub timestamp: DateTime<FixedOffset>,
     pub request: http::Request<()>,
     pub status_code: http::StatusCode,
     pub bytes: u32,
 }
 
-named!(parse_common_log <&str, CommonLogEntry>,
+named!(pub parse_common_log <&str, CommonLogEntry>,
     do_parse!(
-        ip: parse_ipv4 >>
+        ip: parse_ip >>
         identd_user: parse_identd_user >>
         user: parse_user >>
         timestamp: parse_date >>
@@ -130,21 +157,21 @@ named!(parse_common_log <&str, CommonLogEntry>,
 );
 
 #[derive(Debug)]
-pub struct CombinedLogEntry<'a> {
-    pub ip: Ipv4Addr,
-    pub identd_user: Option<&'a str>,
-    pub user: Option<&'a str>,
+pub struct CombinedLogEntry {
+    pub ip: IpAddr,
+    pub identd_user: Option<String>,
+    pub user: Option<String>,
     pub timestamp: DateTime<FixedOffset>,
     pub request: http::Request<()>,
     pub status_code: http::StatusCode,
     pub bytes: u32,
     pub referrer: Option<http::Uri>,
-    pub user_agent: &'a str,
+    pub user_agent: String,
 }
 
-named!(parse_combined_log <&str, CombinedLogEntry>,
+named!(pub parse_combined_log <&str, CombinedLogEntry>,
     do_parse!(
-        ip: parse_ipv4 >>
+        ip: parse_ip >>
         identd_user: parse_identd_user >>
         user: parse_user >>
         timestamp: parse_date >>
@@ -204,19 +231,43 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_ipv6() {
+        assert_eq!(
+            parse_ipv6("::1 "),
+            Ok(("", Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)))
+        );
+
+        assert_eq!(parse_ipv6(""), Err(Incomplete(Size(1))));
+        assert_eq!(parse_ipv6("::"), Err(Incomplete(Size(1))));
+    }
+
+    #[test]
+    fn test_parse_ip() {
+        assert_eq!(
+            parse_ip("127.0.0.1 "),
+            Ok(("", IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1))))
+        );
+
+        assert_eq!(
+            parse_ip("::1 "),
+            Ok(("", IpAddr::V6(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1))))
+        );
+    }
+
+    #[test]
     fn test_parse_identd_user() {
         // https://tools.ietf.org/html/rfc1413
         assert_eq!(parse_identd_user("- "), Ok(("", None)));
         assert_eq!(
             parse_identd_user("user-identifier "),
-            Ok(("", Some("user-identifier")))
+            Ok(("", Some(String::from("user-identifier"))))
         );
     }
 
     #[test]
     fn test_parse_user() {
         assert_eq!(parse_user("- "), Ok(("", None)));
-        assert_eq!(parse_user("daniel "), Ok(("", Some("daniel"))));
+        assert_eq!(parse_user("daniel "), Ok(("", Some(String::from("daniel")))));
     }
 
     #[test]
@@ -250,7 +301,7 @@ mod tests {
         let entry = parse_common_log(r#"127.0.0.1 user-identifier frank [10/Oct/2000:13:55:36 -0700] "GET /apache_pb.gif HTTP/1.0" 200 2326"#);
         assert!(entry.is_ok());
         let entry = entry.unwrap().1;
-        assert_eq!(entry.ip, Ipv4Addr::new(127, 0, 0, 1));
+        assert_eq!(entry.ip, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
         assert!(entry.identd_user.is_some());
         assert_eq!(entry.identd_user.unwrap(), "user-identifier");
         assert!(entry.user.is_some());
@@ -261,6 +312,22 @@ mod tests {
         assert_eq!(entry.request.version(), http::Version::HTTP_10);
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes, 2326);
+    }
+
+    #[test]
+    fn test_parse_common_log_ipv6() {
+        let entry = parse_common_log(r#"2001:8a0:fa0d:ba01:5db0:ae0f:8444:161c - - [02/Mar/2019:17:39:56 +0000] "GET / HTTP/1.1" 200 66503"#);
+        assert!(entry.is_ok());
+        let entry = entry.unwrap().1;
+        assert_eq!(entry.ip, IpAddr::V6(Ipv6Addr::new(0x2001, 0x8a0, 0xfa0d, 0xba01, 0x5db0, 0xae0f, 0x8444, 0x161c)));
+        assert!(entry.identd_user.is_none());
+        assert!(entry.user.is_none());
+        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 3, 2).and_hms(17, 39, 56));
+        assert_eq!(entry.request.method(), http::Method::GET);
+        assert_eq!(entry.request.uri(), "/");
+        assert_eq!(entry.request.version(), http::Version::HTTP_11);
+        assert_eq!(entry.status_code, http::StatusCode::OK);
+        assert_eq!(entry.bytes, 66503);
     }
 
     #[test]
