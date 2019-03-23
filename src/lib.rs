@@ -141,6 +141,20 @@ pub struct CommonLogEntry {
     pub bytes: u32,
 }
 
+impl From<CombinedLogEntry> for CommonLogEntry {
+    fn from(log: CombinedLogEntry) -> Self {
+        CommonLogEntry {
+            ip: log.ip,
+            identd_user: log.identd_user,
+            user: log.user,
+            timestamp: log.timestamp,
+            request: log.request,
+            status_code: log.status_code,
+            bytes: log.bytes,
+        }
+    }
+}
+
 named!(pub parse_common_log <&str, CommonLogEntry>,
     do_parse!(
         ip: parse_ip >>
@@ -167,6 +181,22 @@ pub struct CombinedLogEntry {
     pub bytes: u32,
     pub referrer: Option<http::Uri>,
     pub user_agent: String,
+}
+
+impl From<CommonLogEntry> for CombinedLogEntry {
+    fn from(log: CommonLogEntry) -> Self {
+        CombinedLogEntry {
+            ip: log.ip,
+            identd_user: log.identd_user,
+            user: log.user,
+            timestamp: log.timestamp,
+            request: log.request,
+            status_code: log.status_code,
+            bytes: log.bytes,
+            referrer: None,
+            user_agent: String::from(""),
+        }
+    }
 }
 
 named!(pub parse_combined_log <&str, CombinedLogEntry>,
