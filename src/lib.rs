@@ -38,19 +38,19 @@ named!(parse_date <&str, DateTime<FixedOffset>>,
     )
 );
 
-named!(parse_identd_user <&str, Option<String>>,
+named!(parse_identd_user <&str, Option<&str>>,
     alt!(
         tag!("- ") => { |_| None } |
         opt!(
             map!(
                 take_until_and_consume!(" "),
-                |u| u.into()
+                |u| u
             )
         )
     )
 );
 
-named!(parse_user <&str, Option<String>>,
+named!(parse_user <&str, Option<&str>>,
     alt!(
         tag!("- ") => { |_| None } |
         opt!(
@@ -119,7 +119,7 @@ named!(parse_referrer <&str, Option<http::Uri>>,
     )
 );
 
-named!(parse_user_agent <&str, String>,
+named!(parse_user_agent <&str, &str>,
     map!(
         delimited!(
             tag!(r#"""#),
@@ -131,18 +131,18 @@ named!(parse_user_agent <&str, String>,
 );
 
 #[derive(Debug)]
-pub struct CommonLogEntry {
+pub struct CommonLogEntry<'a> {
     pub ip: IpAddr,
-    pub identd_user: Option<String>,
-    pub user: Option<String>,
+    pub identd_user: Option<&'a str>,
+    pub user: Option<&'a str>,
     pub timestamp: DateTime<FixedOffset>,
     pub request: http::Request<()>,
     pub status_code: http::StatusCode,
     pub bytes: u32,
 }
 
-impl From<CombinedLogEntry> for CommonLogEntry {
-    fn from(log: CombinedLogEntry) -> Self {
+impl<'a> From<CombinedLogEntry<'a>> for CommonLogEntry<'a> {
+    fn from(log: CombinedLogEntry<'a>) -> Self {
         CommonLogEntry {
             ip: log.ip,
             identd_user: log.identd_user,
@@ -171,20 +171,20 @@ named!(pub parse_common_log <&str, CommonLogEntry>,
 );
 
 #[derive(Debug)]
-pub struct CombinedLogEntry {
+pub struct CombinedLogEntry<'a> {
     pub ip: IpAddr,
-    pub identd_user: Option<String>,
-    pub user: Option<String>,
+    pub identd_user: Option<&'a str>,
+    pub user: Option<&'a str>,
     pub timestamp: DateTime<FixedOffset>,
     pub request: http::Request<()>,
     pub status_code: http::StatusCode,
     pub bytes: u32,
     pub referrer: Option<http::Uri>,
-    pub user_agent: String,
+    pub user_agent: &'a str,
 }
 
-impl From<CommonLogEntry> for CombinedLogEntry {
-    fn from(log: CommonLogEntry) -> Self {
+impl<'a> From<CommonLogEntry<'a>> for CombinedLogEntry<'a> {
+    fn from(log: CommonLogEntry<'a>) -> Self {
         CombinedLogEntry {
             ip: log.ip,
             identd_user: log.identd_user,
@@ -194,7 +194,7 @@ impl From<CommonLogEntry> for CombinedLogEntry {
             status_code: log.status_code,
             bytes: log.bytes,
             referrer: None,
-            user_agent: String::from(""),
+            user_agent: "",
         }
     }
 }
@@ -290,14 +290,14 @@ mod tests {
         assert_eq!(parse_identd_user("- "), Ok(("", None)));
         assert_eq!(
             parse_identd_user("user-identifier "),
-            Ok(("", Some(String::from("user-identifier"))))
+            Ok(("", Some("user-identifier")))
         );
     }
 
     #[test]
     fn test_parse_user() {
         assert_eq!(parse_user("- "), Ok(("", None)));
-        assert_eq!(parse_user("daniel "), Ok(("", Some(String::from("daniel")))));
+        assert_eq!(parse_user("daniel "), Ok(("", Some("daniel"))));
     }
 
     #[test]
