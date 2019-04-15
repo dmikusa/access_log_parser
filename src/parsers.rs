@@ -100,11 +100,14 @@ named!(parse_user_agent <&str, &str>,
     )
 );
 
-named!(parse_ip_and_port <&str, (IpAddr, u16)>,
-    do_parse!(
-        ip: flat_map!(take_until_and_consume!(":"), parse_to!(IpAddr)) >>
-        port: flat_map!(take_until!(r#"""#), parse_to!(u16)) >>
-        ((ip, port))
+named!(parse_ip_and_port <&str, (Option<IpAddr>, Option<u16>)>,
+    alt!(
+        tag!("-") => {|_tag| (None, None) } |
+        do_parse!(
+            ip: opt!(flat_map!(take_until_and_consume!(":"), parse_to!(IpAddr))) >>
+            port: opt!(flat_map!(take_until!(r#"""#), parse_to!(u16))) >>
+            ((ip, port))
+        )
     )
 );
 
@@ -323,8 +326,8 @@ named!(pub(crate) parse_gorouter_log <&str, super::GorouterLogEntry>,
                 bytes_sent, 
                 referrer, 
                 user_agent, 
-                remote_addr: remote_addr.0, 
-                remote_port: remote_addr.1, 
+                remote_addr: remote_addr.0.unwrap(), // should always be there
+                remote_port: remote_addr.1.unwrap(), // should always be there
                 backend_addr: backend_addr.0, 
                 backend_port: backend_addr.1, 
                 x_forwarded_for, 
@@ -704,8 +707,8 @@ mod tests {
         assert_eq!(entry.user_agent, "Apache-HttpClient/4.3.3 (java 1.5)");
         assert_eq!(entry.remote_addr, IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182)));
         assert_eq!(entry.remote_port, 63326);
-        assert_eq!(entry.backend_addr, IpAddr::V4(Ipv4Addr::new(10, 224, 28, 75)));
-        assert_eq!(entry.backend_port, 61022);
+        assert_eq!(entry.backend_addr, Some(IpAddr::V4(Ipv4Addr::new(10, 224, 28, 75))));
+        assert_eq!(entry.backend_port, Some(61022));
         assert_eq!(entry.x_forwarded_for.len(), 3);
         assert_eq!(entry.x_forwarded_for[0], IpAddr::V4(Ipv4Addr::new(10, 178, 177, 71)));
         assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(10, 179, 113, 67)));
@@ -742,8 +745,8 @@ mod tests {
         assert_eq!(entry.user_agent, "Apache-HttpClient/4.3.3 (java 1.5)");
         assert_eq!(entry.remote_addr, IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182)));
         assert_eq!(entry.remote_port, 63326);
-        assert_eq!(entry.backend_addr, IpAddr::V4(Ipv4Addr::new(10, 224, 28, 75)));
-        assert_eq!(entry.backend_port, 61022);
+        assert_eq!(entry.backend_addr, Some(IpAddr::V4(Ipv4Addr::new(10, 224, 28, 75))));
+        assert_eq!(entry.backend_port, Some(61022));
         assert_eq!(entry.x_forwarded_for.len(), 3);
         assert_eq!(entry.x_forwarded_for[0], IpAddr::V4(Ipv4Addr::new(10, 178, 177, 71)));
         assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(10, 179, 113, 67)));
