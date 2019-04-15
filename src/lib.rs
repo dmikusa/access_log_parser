@@ -57,9 +57,10 @@ pub struct GorouterLogEntry<'a> {
 pub enum LogEntry<'a> {
     CommonLog(CommonLogEntry<'a>),
     CombinedLog(CombinedLogEntry<'a>),
+    GorouterLog(GorouterLogEntry<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum LogType {
     CommonLog,
     CombinedLog,
@@ -101,6 +102,10 @@ pub fn parse(log_type: LogType, line: &str) -> Result<LogEntry, nom::Err<&str>> 
         },
         LogType::CombinedLog => match parsers::parse_combined_log(line) {
             Ok((_remaining, log)) => Ok(LogEntry::CombinedLog(log)),
+            Err(err) => Err(err),
+        },
+        LogType::GorouterLog => match parsers::parse_gorouter_log(line) {
+            Ok((_remaining, log)) => Ok(LogEntry::GorouterLog(log)),
             Err(err) => Err(err),
         },
         _ => {
@@ -165,7 +170,16 @@ mod tests {
             ))
         );
     }
+
+    #[test]
+    fn test_parse_gorouter_1() {
+        let entry = parse(
+            LogType::GorouterLog,
+            r#"test.app_domain.example.com - [2019-01-28T22:15:08.622+0000] "PUT /eureka/apps/SERVICE-REGISTRY/service-registry:-1532850760?status=UP&lastDirtyTimestamp=1547950465746 HTTP/1.1" 404 0 116 "-" "Java-EurekaClient/v1.7.0" "10.224.20.205:23150" "-" x_forwarded_for:"10.179.113.63" x_forwarded_proto:"https" vcap_request_id:"762147e9-ecb8-41b2-4acd-2adc68122486" response_time:0.000119524 app_id:"-" app_index:"-" x_b3_traceid:"59ece3a70be6b6db" x_b3_spanid:"59ece3a70be6b6db" x_b3_parentspanid:"-""#,
+        );
+        println!("{:#?}", entry);
+        assert!(entry.is_ok());
+    }
 }
 
-// TODO: try using parse in the actual code
-// TODO: add support for gorouter & cloud controller
+// TODO: add support for cloud controller
