@@ -25,7 +25,7 @@ pub struct CombinedLogEntry<'a> {
     pub status_code: http::StatusCode,
     pub bytes: u32,
     pub referrer: Option<http::Uri>,
-    pub user_agent: &'a str,
+    pub user_agent: Option<&'a str>,
 }
 
 #[derive(Debug)]
@@ -37,7 +37,7 @@ pub struct GorouterLogEntry<'a> {
     pub bytes_received: u32,
     pub bytes_sent: u32,
     pub referrer: Option<http::Uri>,
-    pub user_agent: &'a str,
+    pub user_agent: Option<&'a str>,
     pub remote_addr: IpAddr,
     pub remote_port: u16,
     pub backend_addr: Option<IpAddr>,

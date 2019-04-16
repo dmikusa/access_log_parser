@@ -92,11 +92,16 @@ named!(parse_referrer <&str, Option<http::Uri>>,
     )
 );
 
-named!(parse_user_agent <&str, &str>,
-    delimited!(
-        tag!(r#"""#),
-        take_until!(r#"""#),
-        tag!(r#"""#)
+named!(parse_user_agent <&str, Option<&str>>,
+    alt!(
+        tag!(r#""-""#) => {|_tag| None } |
+        opt!(
+            delimited!(
+                tag!(r#"""#),
+                take_until!(r#"""#),
+                tag!(r#"""#)
+            )
+        )
     )
 );
 
@@ -466,7 +471,15 @@ mod tests {
         let agent = parse_user_agent(r#""Mozilla/4.08 [en] (Win98; I ;Nav)""#);
         assert!(agent.is_ok());
         let agent = agent.unwrap().1;
+        assert!(agent.is_some());
+        let agent = agent.unwrap();
         assert_eq!(agent, "Mozilla/4.08 [en] (Win98; I ;Nav)");
+
+        let agent = parse_user_agent(r#""-""#);
+        println!("{:#?}", agent);
+        assert!(agent.is_ok());
+        let agent = agent.unwrap().1;
+        assert!(agent.is_none());
     }
 
     #[test]
@@ -669,7 +682,8 @@ mod tests {
         let referrer = entry.referrer.unwrap();
         assert_eq!(referrer.path(), "/start.html");
         assert_eq!(referrer.host().unwrap(), "www.example.com");
-        assert_eq!(entry.user_agent, "Mozilla/4.08 [en] (Win98; I ;Nav)");
+        assert!(entry.user_agent.is_some());
+        assert_eq!(entry.user_agent.unwrap(), "Mozilla/4.08 [en] (Win98; I ;Nav)");
     }
 
     #[test]
@@ -687,7 +701,8 @@ mod tests {
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes, 612);
         assert!(entry.referrer.is_none());
-        assert_eq!(entry.user_agent, "curl/7.52.1");
+        assert!(entry.user_agent.is_some());
+        assert_eq!(entry.user_agent.unwrap(), "curl/7.52.1");
     }
 
     #[test]
@@ -704,7 +719,8 @@ mod tests {
         assert_eq!(entry.bytes_received, 0);
         assert_eq!(entry.bytes_sent, 16409);
         assert!(entry.referrer.is_none());
-        assert_eq!(entry.user_agent, "Apache-HttpClient/4.3.3 (java 1.5)");
+        assert!(entry.user_agent.is_some());
+        assert_eq!(entry.user_agent.unwrap(), "Apache-HttpClient/4.3.3 (java 1.5)");
         assert_eq!(entry.remote_addr, IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182)));
         assert_eq!(entry.remote_port, 63326);
         assert_eq!(entry.backend_addr, Some(IpAddr::V4(Ipv4Addr::new(10, 224, 28, 75))));
@@ -742,7 +758,8 @@ mod tests {
         assert_eq!(entry.bytes_received, 0);
         assert_eq!(entry.bytes_sent, 16409);
         assert!(entry.referrer.is_none());
-        assert_eq!(entry.user_agent, "Apache-HttpClient/4.3.3 (java 1.5)");
+        assert!(entry.user_agent.is_some());
+        assert_eq!(entry.user_agent.unwrap(), "Apache-HttpClient/4.3.3 (java 1.5)");
         assert_eq!(entry.remote_addr, IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182)));
         assert_eq!(entry.remote_port, 63326);
         assert_eq!(entry.backend_addr, Some(IpAddr::V4(Ipv4Addr::new(10, 224, 28, 75))));
