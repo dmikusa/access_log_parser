@@ -42,6 +42,20 @@ pub struct CombinedLogEntry<'a> {
 }
 
 #[derive(Debug)]
+pub struct CloudControllerLogEntry<'a> {
+    pub request_host: &'a str,
+    pub timestamp: DateTime<FixedOffset>,
+    pub request: http::Request<()>,
+    pub status_code: http::StatusCode,
+    pub bytes: u32,
+    pub referrer: Option<http::Uri>,
+    pub user_agent: Option<&'a str>,
+    pub x_forwarded_for: Vec<IpAddr>,
+    pub vcap_request_id: &'a str,
+    pub response_time: f32,
+}
+
+#[derive(Debug)]
 pub struct GorouterLogEntry<'a> {
     pub request_host: &'a str,
     pub timestamp: DateTime<FixedOffset>,
@@ -71,6 +85,7 @@ pub enum LogEntry<'a> {
     CommonLog(CommonLogEntry<'a>),
     CombinedLog(CombinedLogEntry<'a>),
     GorouterLog(GorouterLogEntry<'a>),
+    CloudControllerLog(CloudControllerLogEntry<'a>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -117,13 +132,14 @@ pub fn parse(log_type: LogType, line: &str) -> Result<LogEntry, nom::Err<&str>> 
             Ok((_remaining, log)) => Ok(LogEntry::CombinedLog(log)),
             Err(err) => Err(err),
         },
+        LogType::CloudControllerLog => match parsers::parse_cloud_controller_log(line) {
+            Ok((_remaining, log)) => Ok(LogEntry::CloudControllerLog(log)),
+            Err(err) => Err(err),
+        },
         LogType::GorouterLog => match parsers::parse_gorouter_log(line) {
             Ok((_remaining, log)) => Ok(LogEntry::GorouterLog(log)),
             Err(err) => Err(err),
         },
-        _ => {
-            unimplemented!();
-        }
     }
 }
 
@@ -185,7 +201,14 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_gorouter_1() {
+    fn test_parse_cloud_controller() {
+        let entry = parse(LogType::CloudControllerLog, r#"api.system_domain.local - [01/Feb/2019:20:45:02 +0000] "GET /v2/spaces/a91c3fa8-e67d-40dd-9d6b-d01aefe5062a/summary HTTP/1.1" 200 53188 "-" "cf_exporter/" 172.26.28.115, 172.26.31.254, 172.26.30.2 vcap_request_id:49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92 response_time:0.252"#);
+        println!("{:#?}", entry);
+        assert!(entry.is_ok());
+    }
+
+    #[test]
+    fn test_parse_gorouter() {
         let entry = parse(
             LogType::GorouterLog,
             r#"test.app_domain.example.com - [2019-01-28T22:15:08.622+0000] "PUT /eureka/apps/SERVICE-REGISTRY/service-registry:-1532850760?status=UP&lastDirtyTimestamp=1547950465746 HTTP/1.1" 404 0 116 "-" "Java-EurekaClient/v1.7.0" "10.224.20.205:23150" "-" x_forwarded_for:"10.179.113.63" x_forwarded_proto:"https" vcap_request_id:"762147e9-ecb8-41b2-4acd-2adc68122486" response_time:0.000119524 app_id:"-" app_index:"-" x_b3_traceid:"59ece3a70be6b6db" x_b3_spanid:"59ece3a70be6b6db" x_b3_parentspanid:"-""#,

@@ -129,13 +129,26 @@ named!(parse_ip_and_port <&str, (Option<IpAddr>, Option<u16>)>,
     )
 );
 
+named!(parse_ip_list <&str, Vec<IpAddr>>,
+    separated_list_complete!(
+        tag!(", "),
+        flat_map!(
+            alt_complete!(
+                take_until!(",") |
+                take_until!(r#"""#) |
+                take_until!(" ")
+            ),
+            parse_to!(IpAddr)
+        )
+    )
+);
+
 named!(parse_x_forwarded_for <&str, Vec<IpAddr>>,
     do_parse!(
         tag!("x_forwarded_for:") >>
         ips: delimited!(
             tag!(r#"""#),
-            separated_list_complete!(tag!(", "), 
-                flat_map!(alt_complete!(take_until!(",") | take_until!(r#"""#)), parse_to!(IpAddr))),
+            parse_ip_list,
             tag!(r#"""#)
         ) >>
         (ips)
@@ -160,10 +173,13 @@ named!(parse_x_forwarded_proto <&str, XForwardedProto>,
 named!(parse_vcap_request_id <&str, &str>,
     do_parse!(
         tag!("vcap_request_id:") >>
-        vcap_request_id: delimited!(
-            tag!(r#"""#),
-            take_until!(r#"""#),
-            tag!(r#"""#)
+        vcap_request_id: alt!(
+            delimited!(
+                tag!(r#"""#),
+                take_until!(r#"""#),
+                tag!(r#"""#)
+            ) |
+            take_until!(" ")
         ) >>
         (vcap_request_id)
     )
@@ -295,6 +311,40 @@ named!(pub(crate) parse_combined_log <&str, super::CombinedLogEntry>,
         tag!(" ") >>
         user_agent: parse_user_agent >>
         (super::CombinedLogEntry { ip, identd_user, user, timestamp, request, status_code, bytes, referrer, user_agent })
+    )
+);
+
+named!(pub(crate) parse_cloud_controller_log <&str, super::CloudControllerLogEntry>,
+    do_parse!(
+        request_host: take_until_and_consume!(" ") >>
+        tag!("- ") >>
+        timestamp: parse_date >>
+        tag!(" ") >>
+        request: parse_request >>
+        tag!(" ") >>
+        status_code: parse_http_status >>
+        bytes: parse_bytes >>
+        referrer: parse_referrer >>
+        tag!(" ") >>
+        user_agent: parse_user_agent >>
+        tag!(" ") >>
+        x_forwarded_for: parse_ip_list >>
+        tag!(" ") >>
+        vcap_request_id: parse_vcap_request_id >>
+        tag!(" ") >>
+        response_time: parse_response_time >>
+        (super::CloudControllerLogEntry{
+            request_host,
+            timestamp,
+            request,
+            status_code,
+            bytes,
+            referrer,
+            user_agent,
+            x_forwarded_for,
+            vcap_request_id,
+            response_time,
+        })
     )
 );
 
@@ -523,6 +573,11 @@ mod tests {
         assert!(vcap_request_id.is_ok());
         let vcap_request_id = vcap_request_id.unwrap().1;
         assert_eq!(vcap_request_id, "e1604ad1-002c-48ff-6c44-f360e3096911");
+
+        let vcap_request_id = parse_vcap_request_id(r#"vcap_request_id:49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92 "#);
+        assert!(vcap_request_id.is_ok());
+        let vcap_request_id = vcap_request_id.unwrap().1;
+        assert_eq!(vcap_request_id, "49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92");
     }
 
     #[test]
@@ -716,6 +771,29 @@ mod tests {
         assert!(entry.referrer.is_none());
         assert!(entry.user_agent.is_some());
         assert_eq!(entry.user_agent.unwrap(), "curl/7.52.1");
+    }
+
+    #[test]
+    fn test_parse_cloud_controller_access_log() {
+        let entry = parse_cloud_controller_log(r#"api.system_domain.local - [01/Feb/2019:20:45:02 +0000] "GET /v2/spaces/a91c3fa8-e67d-40dd-9d6b-d01aefe5062a/summary HTTP/1.1" 200 53188 "-" "cf_exporter/" 172.26.28.115, 172.26.31.254, 172.26.30.2 vcap_request_id:49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92 response_time:0.252"#);
+        assert!(entry.is_ok());
+        let entry = entry.unwrap().1;
+        assert_eq!(entry.request_host, "api.system_domain.local");
+        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 2, 01).and_hms(20, 45, 2));
+        assert_eq!(entry.request.method(), http::Method::GET);
+        assert_eq!(entry.request.uri(), "/v2/spaces/a91c3fa8-e67d-40dd-9d6b-d01aefe5062a/summary");
+        assert_eq!(entry.request.version(), http::Version::HTTP_11);
+        assert_eq!(entry.status_code, http::StatusCode::OK);
+        assert_eq!(entry.bytes, 53188);
+        assert!(entry.referrer.is_none());
+        assert!(entry.user_agent.is_some());
+        assert_eq!(entry.user_agent.unwrap(), "cf_exporter/");
+        assert_eq!(entry.x_forwarded_for.len(), 3);
+        assert_eq!(entry.x_forwarded_for[0], IpAddr::V4(Ipv4Addr::new(172, 26, 28, 115)));
+        assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(172, 26, 31, 254)));
+        assert_eq!(entry.x_forwarded_for[2], IpAddr::V4(Ipv4Addr::new(172, 26, 30, 2)));
+        assert_eq!(entry.vcap_request_id, "49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92");
+        assert_eq!(entry.response_time, 0.252);
     }
 
     #[test]

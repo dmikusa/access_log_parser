@@ -1,6 +1,6 @@
 # Access Log Parser
 
-This is a pure Rust library for parsing access log entries. It currently support common, combined and Gorouter log formats.
+This is a pure Rust library for parsing access log entries. It currently support common, combined, Cloud Controller Nginx and Gorouter log formats.
 
 ## Usage
 
@@ -40,6 +40,7 @@ Parse a log line:
 * Supported log formats:
   - Common
   - Combined
+  - Cloud Controller Nginx
   - Gorouter
 
 ## License
