@@ -170,26 +170,37 @@ named!(parse_x_forwarded_proto <&str, XForwardedProto>,
     )
 );
 
-named!(parse_vcap_request_id <&str, &str>,
-    do_parse!(
-        tag!("vcap_request_id:") >>
-        vcap_request_id: alt!(
-            delimited!(
-                tag!(r#"""#),
-                take_until!(r#"""#),
-                tag!(r#"""#)
-            ) |
-            take_until!(" ")
-        ) >>
-        (vcap_request_id)
+named!(parse_vcap_request_id <&str, Option<&str>>,
+    alt!(
+        tag!("vcap_request_id:-") => {|_time| None } |
+        tag!(r#"vcap_request_id:"-""#) => {|_time| None } |
+        opt!(
+            do_parse!(
+                tag!("vcap_request_id:") >>
+                vcap_request_id: alt!(
+                    delimited!(
+                        tag!(r#"""#),
+                        take_until!(r#"""#),
+                        tag!(r#"""#)
+                    ) |
+                    take_until!(" ")
+                ) >>
+                (vcap_request_id)
+            )
+        )
     )
 );
 
-named!(parse_response_time <&str, f32>,
-    do_parse!(
-        tag!("response_time:") >>
-        response_time: flat_map!(alt_complete!(recognize_float | rest), parse_to!(f32)) >>
-        (response_time)
+named!(parse_response_time <&str, Option<f32>>,
+    alt!(
+        tag!("response_time:-") => {|_time| None } |
+        opt!(
+            do_parse!(
+                tag!("response_time:") >>
+                response_time: flat_map!(alt_complete!(recognize_float | rest), parse_to!(f32)) >>
+                (response_time)
+            )
+        )
     )
 );
 
@@ -572,12 +583,24 @@ mod tests {
         let vcap_request_id = parse_vcap_request_id(r#"vcap_request_id:"e1604ad1-002c-48ff-6c44-f360e3096911""#);
         assert!(vcap_request_id.is_ok());
         let vcap_request_id = vcap_request_id.unwrap().1;
-        assert_eq!(vcap_request_id, "e1604ad1-002c-48ff-6c44-f360e3096911");
+        assert!(vcap_request_id.is_some());
+        assert_eq!(vcap_request_id.unwrap(), "e1604ad1-002c-48ff-6c44-f360e3096911");
 
         let vcap_request_id = parse_vcap_request_id(r#"vcap_request_id:49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92 "#);
         assert!(vcap_request_id.is_ok());
         let vcap_request_id = vcap_request_id.unwrap().1;
-        assert_eq!(vcap_request_id, "49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92");
+        assert!(vcap_request_id.is_some());
+        assert_eq!(vcap_request_id.unwrap(), "49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92");
+
+        let vcap_request_id = parse_vcap_request_id(r#"vcap_request_id:"-""#);
+        assert!(vcap_request_id.is_ok());
+        let vcap_request_id = vcap_request_id.unwrap().1;
+        assert!(vcap_request_id.is_none());
+
+        let vcap_request_id = parse_vcap_request_id("vcap_request_id:-");
+        assert!(vcap_request_id.is_ok());
+        let vcap_request_id = vcap_request_id.unwrap().1;
+        assert!(vcap_request_id.is_none());
     }
 
     #[test]
@@ -585,7 +608,13 @@ mod tests {
         let response_time = parse_response_time(r#"response_time:0.007799583"#);
         assert!(response_time.is_ok());
         let response_time = response_time.unwrap().1;
-        assert_eq!(response_time, 0.007799583);
+        assert!(response_time.is_some());
+        assert_eq!(response_time.unwrap(), 0.007799583);
+
+        let response_time = parse_response_time(r#"response_time:-"#);
+        assert!(response_time.is_ok());
+        let response_time = response_time.unwrap().1;
+        assert!(response_time.is_none());
     }
 
     #[test]
@@ -779,7 +808,7 @@ mod tests {
         assert!(entry.is_ok());
         let entry = entry.unwrap().1;
         assert_eq!(entry.request_host, "api.system_domain.local");
-        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 2, 01).and_hms(20, 45, 2));
+        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 2, 1).and_hms(20, 45, 2));
         assert_eq!(entry.request.method(), http::Method::GET);
         assert_eq!(entry.request.uri(), "/v2/spaces/a91c3fa8-e67d-40dd-9d6b-d01aefe5062a/summary");
         assert_eq!(entry.request.version(), http::Version::HTTP_11);
@@ -792,8 +821,35 @@ mod tests {
         assert_eq!(entry.x_forwarded_for[0], IpAddr::V4(Ipv4Addr::new(172, 26, 28, 115)));
         assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(172, 26, 31, 254)));
         assert_eq!(entry.x_forwarded_for[2], IpAddr::V4(Ipv4Addr::new(172, 26, 30, 2)));
-        assert_eq!(entry.vcap_request_id, "49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92");
-        assert_eq!(entry.response_time, 0.252);
+        assert!(entry.vcap_request_id.is_some());
+        assert_eq!(entry.vcap_request_id.unwrap(), "49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92");
+        assert!(entry.response_time.is_some());
+        assert_eq!(entry.response_time.unwrap(), 0.252);
+    }
+
+    #[test]
+    fn test_parse_cloud_controller_access_log_with_no_response_time() {
+        let entry = parse_cloud_controller_log(r#"api.system_domain.local - [01/Feb/2019:15:26:42 +0000] "GET /v2/organizations?page=1&results-per-page=1&order-direction=asc HTTP/1.1" 499 0 "-" "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36" 10.1.43.82, 172.26.31.254, 172.26.28.40, 172.26.31.254, 172.26.30.1 vcap_request_id:- response_time:-"#);
+        assert!(entry.is_ok());
+        let entry = entry.unwrap().1;
+        assert_eq!(entry.request_host, "api.system_domain.local");
+        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 2, 1).and_hms(15, 26, 42));
+        assert_eq!(entry.request.method(), http::Method::GET);
+        assert_eq!(entry.request.uri(), "/v2/organizations?page=1&results-per-page=1&order-direction=asc");
+        assert_eq!(entry.request.version(), http::Version::HTTP_11);
+        assert_eq!(entry.status_code, http::StatusCode::from_u16(499).unwrap());
+        assert_eq!(entry.bytes, 0);
+        assert!(entry.referrer.is_none());
+        assert!(entry.user_agent.is_some());
+        assert_eq!(entry.user_agent.unwrap(), "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36");
+        assert_eq!(entry.x_forwarded_for.len(), 5);
+        assert_eq!(entry.x_forwarded_for[0], IpAddr::V4(Ipv4Addr::new(10, 1, 43, 82)));
+        assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(172, 26, 31, 254)));
+        assert_eq!(entry.x_forwarded_for[2], IpAddr::V4(Ipv4Addr::new(172, 26, 28, 40)));
+        assert_eq!(entry.x_forwarded_for[3], IpAddr::V4(Ipv4Addr::new(172, 26, 31, 254)));
+        assert_eq!(entry.x_forwarded_for[4], IpAddr::V4(Ipv4Addr::new(172, 26, 30, 1)));
+        assert!(entry.vcap_request_id.is_none());
+        assert!(entry.response_time.is_none());
     }
 
     #[test]
@@ -821,8 +877,10 @@ mod tests {
         assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(10, 179, 113, 67)));
         assert_eq!(entry.x_forwarded_for[2], IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182)));
         assert_eq!(entry.x_forwarded_proto, XForwardedProto::HTTPS);
-        assert_eq!(entry.vcap_request_id, "e1604ad1-002c-48ff-6c44-f360e3096911");
-        assert_eq!(entry.response_time, 0.007799583);
+        assert!(entry.vcap_request_id.is_some());
+        assert_eq!(entry.vcap_request_id.unwrap(), "e1604ad1-002c-48ff-6c44-f360e3096911");
+        assert!(entry.response_time.is_some());
+        assert_eq!(entry.response_time.unwrap(), 0.007799583);
         assert!(entry.app_id.is_some());
         assert_eq!(entry.app_id.unwrap(), "2c3f3955-d0cd-444c-9350-3fc47bd44eaa");
         assert!(entry.app_index.is_some());
@@ -860,8 +918,10 @@ mod tests {
         assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(10, 179, 113, 67)));
         assert_eq!(entry.x_forwarded_for[2], IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182)));
         assert_eq!(entry.x_forwarded_proto, XForwardedProto::HTTPS);
-        assert_eq!(entry.vcap_request_id, "e1604ad1-002c-48ff-6c44-f360e3096911");
-        assert_eq!(entry.response_time, 0.007799583);
+        assert!(entry.vcap_request_id.is_some());
+        assert_eq!(entry.vcap_request_id.unwrap(), "e1604ad1-002c-48ff-6c44-f360e3096911");
+        assert!(entry.response_time.is_some());
+        assert_eq!(entry.response_time.unwrap(), 0.007799583);
         assert!(entry.app_id.is_some());
         assert_eq!(entry.app_id.unwrap(), "2c3f3955-d0cd-444c-9350-3fc47bd44eaa");
         assert!(entry.app_index.is_some());

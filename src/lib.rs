@@ -51,8 +51,8 @@ pub struct CloudControllerLogEntry<'a> {
     pub referrer: Option<http::Uri>,
     pub user_agent: Option<&'a str>,
     pub x_forwarded_for: Vec<IpAddr>,
-    pub vcap_request_id: &'a str,
-    pub response_time: f32,
+    pub vcap_request_id: Option<&'a str>,
+    pub response_time: Option<f32>,
 }
 
 #[derive(Debug)]
@@ -71,8 +71,8 @@ pub struct GorouterLogEntry<'a> {
     pub backend_port: Option<u16>,
     pub x_forwarded_for: Vec<IpAddr>,
     pub x_forwarded_proto: XForwardedProto,
-    pub vcap_request_id: &'a str,
-    pub response_time: f32,
+    pub vcap_request_id: Option<&'a str>,
+    pub response_time: Option<f32>,
     pub app_id: Option<&'a str>,
     pub app_index: Option<u16>,
     pub trace_id: Option<&'a str>,
@@ -217,5 +217,3 @@ mod tests {
         assert!(entry.is_ok());
     }
 }
-
-// TODO: add support for cloud controller
