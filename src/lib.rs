@@ -114,6 +114,7 @@ impl FromStr for LogType {
 pub enum XForwardedProto {
     HTTP,
     HTTPS,
+    UNSPECIFIED,
 }
 
 impl Default for XForwardedProto {

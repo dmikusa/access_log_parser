@@ -11,11 +11,11 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-use nom::*;
-use chrono::prelude::*;
-use std::net::IpAddr;
-use http;
 use super::XForwardedProto;
+use chrono::prelude::*;
+use http;
+use nom::*;
+use std::net::IpAddr;
 
 named!(parse_ip <&str, IpAddr>,
     flat_map!(take_until_and_consume!(" "), parse_to!(IpAddr))
@@ -144,29 +144,37 @@ named!(parse_ip_list <&str, Vec<IpAddr>>,
 );
 
 named!(parse_x_forwarded_for <&str, Vec<IpAddr>>,
-    do_parse!(
-        tag!("x_forwarded_for:") >>
-        ips: delimited!(
-            tag!(r#"""#),
-            parse_ip_list,
-            tag!(r#"""#)
-        ) >>
-        (ips)
+    alt!(
+        tag!("x_forwarded_for:-") => {|_time| Vec::new() } |
+        tag!(r#"x_forwarded_for:"-""#) => {|_tag| Vec::new() } |
+        do_parse!(
+            tag!("x_forwarded_for:") >>
+            ips: delimited!(
+                tag!(r#"""#),
+                parse_ip_list,
+                tag!(r#"""#)
+            ) >>
+            (ips)
+        )
     )
 );
 
 named!(parse_x_forwarded_proto <&str, XForwardedProto>,
-    do_parse!(
-        tag!("x_forwarded_proto:") >>
-        x_forwarded_for: delimited!(
-            tag!(r#"""#),
-            alt!(
-                tag!("https") => { |_proto| XForwardedProto::HTTPS } |
-                tag!("http") => { |_proto| XForwardedProto::HTTP }
-            ),
-            tag!(r#"""#)
-        ) >>
-        (x_forwarded_for)
+    alt!(
+        tag!("x_forwarded_proto:-") => {|_time| XForwardedProto::UNSPECIFIED } |
+        tag!(r#"x_forwarded_proto:"-""#) => {|_tag| XForwardedProto::UNSPECIFIED } |
+        do_parse!(
+            tag!("x_forwarded_proto:") >>
+            x_forwarded_for: delimited!(
+                tag!(r#"""#),
+                alt!(
+                    tag!("https") => { |_proto| XForwardedProto::HTTPS } |
+                    tag!("http") => { |_proto| XForwardedProto::HTTP }
+                ),
+                tag!(r#"""#)
+            ) >>
+            (x_forwarded_for)
+        )
     )
 );
 
@@ -441,12 +449,8 @@ mod tests {
             parse_date("[25/Jul/2000:13:55:36 -0700]"),
             Ok(("", expected))
         );
-        
-        assert_eq!(
-            parse_date("[2000-07-25 13:55:36-0700]"),
-            Ok(("", expected))
-        );
 
+        assert_eq!(parse_date("[2000-07-25 13:55:36-0700]"), Ok(("", expected)));
         assert_eq!(
             parse_date("[2000-07-25T13:55:36-07:00]"),
             Ok(("", expected))
@@ -522,8 +526,14 @@ mod tests {
 
     #[test]
     fn test_parse_http_status() {
-        assert_eq!(parse_http_status("404 "), Ok(("", http::StatusCode::NOT_FOUND)));
-        assert_eq!(parse_http_status("418 "), Ok(("", http::StatusCode::IM_A_TEAPOT)));
+        assert_eq!(
+            parse_http_status("404 "),
+            Ok(("", http::StatusCode::NOT_FOUND))
+        );
+        assert_eq!(
+            parse_http_status("418 "),
+            Ok(("", http::StatusCode::IM_A_TEAPOT))
+        );
         assert_eq!(parse_http_status(" "), Err(Error(Code("", ParseTo))));
     }
 
@@ -550,7 +560,6 @@ mod tests {
         assert_eq!(agent, "Mozilla/4.08 [en] (Win98; I ;Nav)");
 
         let agent = parse_user_agent(r#""-""#);
-        println!("{:#?}", agent);
         assert!(agent.is_ok());
         let agent = agent.unwrap().1;
         assert!(agent.is_none());
@@ -561,8 +570,13 @@ mod tests {
         let x_forwarded_for = parse_x_forwarded_for(r#"x_forwarded_for:"10.10.10.1, 10.10.10.2""#);
         assert!(x_forwarded_for.is_ok());
         let x_forwarded_for = x_forwarded_for.unwrap().1;
-        assert_eq!(x_forwarded_for, vec![IpAddr::V4(Ipv4Addr::new(10, 10, 10, 1)),
-                                         IpAddr::V4(Ipv4Addr::new(10, 10, 10, 2))]);
+        assert_eq!(
+            x_forwarded_for,
+            vec![
+                IpAddr::V4(Ipv4Addr::new(10, 10, 10, 1)),
+                IpAddr::V4(Ipv4Addr::new(10, 10, 10, 2))
+            ]
+        );
     }
 
     #[test]
@@ -580,17 +594,24 @@ mod tests {
 
     #[test]
     fn test_parse_vcap_request_id() {
-        let vcap_request_id = parse_vcap_request_id(r#"vcap_request_id:"e1604ad1-002c-48ff-6c44-f360e3096911""#);
+        let vcap_request_id =
+            parse_vcap_request_id(r#"vcap_request_id:"e1604ad1-002c-48ff-6c44-f360e3096911""#);
         assert!(vcap_request_id.is_ok());
         let vcap_request_id = vcap_request_id.unwrap().1;
         assert!(vcap_request_id.is_some());
-        assert_eq!(vcap_request_id.unwrap(), "e1604ad1-002c-48ff-6c44-f360e3096911");
+        assert_eq!(
+            vcap_request_id.unwrap(),
+            "e1604ad1-002c-48ff-6c44-f360e3096911"
+        );
 
         let vcap_request_id = parse_vcap_request_id(r#"vcap_request_id:49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92 "#);
         assert!(vcap_request_id.is_ok());
         let vcap_request_id = vcap_request_id.unwrap().1;
         assert!(vcap_request_id.is_some());
-        assert_eq!(vcap_request_id.unwrap(), "49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92");
+        assert_eq!(
+            vcap_request_id.unwrap(),
+            "49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92"
+        );
 
         let vcap_request_id = parse_vcap_request_id(r#"vcap_request_id:"-""#);
         assert!(vcap_request_id.is_ok());
@@ -662,7 +683,6 @@ mod tests {
         assert!(trace_id.is_none());
 
         let trace_id = parse_trace_id(r#""#);
-        print!("{:#?}", trace_id);
         assert!(trace_id.is_ok());
         let trace_id = trace_id.unwrap().1;
         assert!(trace_id.is_none());
@@ -683,7 +703,6 @@ mod tests {
         assert!(span_id.is_none());
 
         let span_id = parse_span_id(r#""#);
-        print!("{:#?}", span_id);
         assert!(span_id.is_ok());
         let span_id = span_id.unwrap().1;
         assert!(span_id.is_none());
@@ -704,7 +723,6 @@ mod tests {
         assert!(parent_span_id.is_none());
 
         let parent_span_id = parse_parent_span_id(r#""#);
-        print!("{:#?}", parent_span_id);
         assert!(parent_span_id.is_ok());
         let parent_span_id = parent_span_id.unwrap().1;
         assert!(parent_span_id.is_none());
@@ -720,7 +738,12 @@ mod tests {
         assert_eq!(entry.identd_user.unwrap(), "user-identifier");
         assert!(entry.user.is_some());
         assert_eq!(entry.user.unwrap(), "frank");
-        assert_eq!(entry.timestamp, FixedOffset::west(7 * 3600).ymd(2000, 10, 10).and_hms(13, 55, 36));
+        assert_eq!(
+            entry.timestamp,
+            FixedOffset::west(7 * 3600)
+                .ymd(2000, 10, 10)
+                .and_hms(13, 55, 36)
+        );
         assert_eq!(entry.request.method(), http::Method::GET);
         assert_eq!(entry.request.uri(), "/apache_pb.gif");
         assert_eq!(entry.request.version(), http::Version::HTTP_10);
@@ -733,10 +756,18 @@ mod tests {
         let entry = parse_common_log(r#"2001:8a0:fa0d:ba01:5db0:ae0f:8444:161c - - [02/Mar/2019:17:39:56 +0000] "GET / HTTP/1.1" 200 66503"#);
         assert!(entry.is_ok());
         let entry = entry.unwrap().1;
-        assert_eq!(entry.ip, IpAddr::V6(Ipv6Addr::new(0x2001, 0x8a0, 0xfa0d, 0xba01, 0x5db0, 0xae0f, 0x8444, 0x161c)));
+        assert_eq!(
+            entry.ip,
+            IpAddr::V6(Ipv6Addr::new(
+                0x2001, 0x8a0, 0xfa0d, 0xba01, 0x5db0, 0xae0f, 0x8444, 0x161c
+            ))
+        );
         assert!(entry.identd_user.is_none());
         assert!(entry.user.is_none());
-        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 3, 2).and_hms(17, 39, 56));
+        assert_eq!(
+            entry.timestamp,
+            FixedOffset::west(0).ymd(2019, 3, 2).and_hms(17, 39, 56)
+        );
         assert_eq!(entry.request.method(), http::Method::GET);
         assert_eq!(entry.request.uri(), "/");
         assert_eq!(entry.request.version(), http::Version::HTTP_11);
@@ -746,13 +777,18 @@ mod tests {
 
     #[test]
     fn test_parse_common_log_entry_more() {
-        let entry = parse_common_log(r#"127.0.0.1 - - [15/Mar/2019:03:17:05 +0000] "GET / HTTP/1.1" 200 612"#);
+        let entry = parse_common_log(
+            r#"127.0.0.1 - - [15/Mar/2019:03:17:05 +0000] "GET / HTTP/1.1" 200 612"#,
+        );
         assert!(entry.is_ok());
         let entry = entry.unwrap().1;
         assert_eq!(entry.ip, Ipv4Addr::new(127, 0, 0, 1));
         assert!(entry.identd_user.is_none());
         assert!(entry.user.is_none());
-        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 3, 15).and_hms(3, 17, 5));
+        assert_eq!(
+            entry.timestamp,
+            FixedOffset::west(0).ymd(2019, 3, 15).and_hms(3, 17, 5)
+        );
         assert_eq!(entry.request.method(), http::Method::GET);
         assert_eq!(entry.request.uri(), "/");
         assert_eq!(entry.request.version(), http::Version::HTTP_11);
@@ -769,7 +805,12 @@ mod tests {
         assert!(entry.identd_user.is_none());
         assert!(entry.user.is_some());
         assert_eq!(entry.user.unwrap(), "frank");
-        assert_eq!(entry.timestamp, FixedOffset::west(7 * 3600).ymd(2000, 10, 10).and_hms(13, 55, 36));
+        assert_eq!(
+            entry.timestamp,
+            FixedOffset::west(7 * 3600)
+                .ymd(2000, 10, 10)
+                .and_hms(13, 55, 36)
+        );
         assert_eq!(entry.request.method(), http::Method::GET);
         assert_eq!(entry.request.uri(), "/apache_pb.gif");
         assert_eq!(entry.request.version(), http::Version::HTTP_10);
@@ -780,7 +821,10 @@ mod tests {
         assert_eq!(referrer.path(), "/start.html");
         assert_eq!(referrer.host().unwrap(), "www.example.com");
         assert!(entry.user_agent.is_some());
-        assert_eq!(entry.user_agent.unwrap(), "Mozilla/4.08 [en] (Win98; I ;Nav)");
+        assert_eq!(
+            entry.user_agent.unwrap(),
+            "Mozilla/4.08 [en] (Win98; I ;Nav)"
+        );
     }
 
     #[test]
@@ -791,7 +835,10 @@ mod tests {
         assert_eq!(entry.ip, Ipv4Addr::new(127, 0, 0, 1));
         assert!(entry.identd_user.is_none());
         assert!(entry.user.is_none());
-        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 3, 15).and_hms(3, 17, 5));
+        assert_eq!(
+            entry.timestamp,
+            FixedOffset::west(0).ymd(2019, 3, 15).and_hms(3, 17, 5)
+        );
         assert_eq!(entry.request.method(), http::Method::GET);
         assert_eq!(entry.request.uri(), "/");
         assert_eq!(entry.request.version(), http::Version::HTTP_11);
@@ -808,9 +855,15 @@ mod tests {
         assert!(entry.is_ok());
         let entry = entry.unwrap().1;
         assert_eq!(entry.request_host, "api.system_domain.local");
-        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 2, 1).and_hms(20, 45, 2));
+        assert_eq!(
+            entry.timestamp,
+            FixedOffset::west(0).ymd(2019, 2, 1).and_hms(20, 45, 2)
+        );
         assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(entry.request.uri(), "/v2/spaces/a91c3fa8-e67d-40dd-9d6b-d01aefe5062a/summary");
+        assert_eq!(
+            entry.request.uri(),
+            "/v2/spaces/a91c3fa8-e67d-40dd-9d6b-d01aefe5062a/summary"
+        );
         assert_eq!(entry.request.version(), http::Version::HTTP_11);
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes, 53188);
@@ -818,11 +871,23 @@ mod tests {
         assert!(entry.user_agent.is_some());
         assert_eq!(entry.user_agent.unwrap(), "cf_exporter/");
         assert_eq!(entry.x_forwarded_for.len(), 3);
-        assert_eq!(entry.x_forwarded_for[0], IpAddr::V4(Ipv4Addr::new(172, 26, 28, 115)));
-        assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(172, 26, 31, 254)));
-        assert_eq!(entry.x_forwarded_for[2], IpAddr::V4(Ipv4Addr::new(172, 26, 30, 2)));
+        assert_eq!(
+            entry.x_forwarded_for[0],
+            IpAddr::V4(Ipv4Addr::new(172, 26, 28, 115))
+        );
+        assert_eq!(
+            entry.x_forwarded_for[1],
+            IpAddr::V4(Ipv4Addr::new(172, 26, 31, 254))
+        );
+        assert_eq!(
+            entry.x_forwarded_for[2],
+            IpAddr::V4(Ipv4Addr::new(172, 26, 30, 2))
+        );
         assert!(entry.vcap_request_id.is_some());
-        assert_eq!(entry.vcap_request_id.unwrap(), "49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92");
+        assert_eq!(
+            entry.vcap_request_id.unwrap(),
+            "49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92"
+        );
         assert!(entry.response_time.is_some());
         assert_eq!(entry.response_time.unwrap(), 0.252);
     }
@@ -833,9 +898,15 @@ mod tests {
         assert!(entry.is_ok());
         let entry = entry.unwrap().1;
         assert_eq!(entry.request_host, "api.system_domain.local");
-        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 2, 1).and_hms(15, 26, 42));
+        assert_eq!(
+            entry.timestamp,
+            FixedOffset::west(0).ymd(2019, 2, 1).and_hms(15, 26, 42)
+        );
         assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(entry.request.uri(), "/v2/organizations?page=1&results-per-page=1&order-direction=asc");
+        assert_eq!(
+            entry.request.uri(),
+            "/v2/organizations?page=1&results-per-page=1&order-direction=asc"
+        );
         assert_eq!(entry.request.version(), http::Version::HTTP_11);
         assert_eq!(entry.status_code, http::StatusCode::from_u16(499).unwrap());
         assert_eq!(entry.bytes, 0);
@@ -843,11 +914,26 @@ mod tests {
         assert!(entry.user_agent.is_some());
         assert_eq!(entry.user_agent.unwrap(), "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/71.0.3578.98 Safari/537.36");
         assert_eq!(entry.x_forwarded_for.len(), 5);
-        assert_eq!(entry.x_forwarded_for[0], IpAddr::V4(Ipv4Addr::new(10, 1, 43, 82)));
-        assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(172, 26, 31, 254)));
-        assert_eq!(entry.x_forwarded_for[2], IpAddr::V4(Ipv4Addr::new(172, 26, 28, 40)));
-        assert_eq!(entry.x_forwarded_for[3], IpAddr::V4(Ipv4Addr::new(172, 26, 31, 254)));
-        assert_eq!(entry.x_forwarded_for[4], IpAddr::V4(Ipv4Addr::new(172, 26, 30, 1)));
+        assert_eq!(
+            entry.x_forwarded_for[0],
+            IpAddr::V4(Ipv4Addr::new(10, 1, 43, 82))
+        );
+        assert_eq!(
+            entry.x_forwarded_for[1],
+            IpAddr::V4(Ipv4Addr::new(172, 26, 31, 254))
+        );
+        assert_eq!(
+            entry.x_forwarded_for[2],
+            IpAddr::V4(Ipv4Addr::new(172, 26, 28, 40))
+        );
+        assert_eq!(
+            entry.x_forwarded_for[3],
+            IpAddr::V4(Ipv4Addr::new(172, 26, 31, 254))
+        );
+        assert_eq!(
+            entry.x_forwarded_for[4],
+            IpAddr::V4(Ipv4Addr::new(172, 26, 30, 1))
+        );
         assert!(entry.vcap_request_id.is_none());
         assert!(entry.response_time.is_none());
     }
@@ -858,7 +944,12 @@ mod tests {
         assert!(entry.is_ok());
         let entry = entry.unwrap().1;
         assert_eq!(entry.request_host, "service.apps-domain.example.com");
-        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 1, 28).and_hms_milli(22, 15, 2, 499));
+        assert_eq!(
+            entry.timestamp,
+            FixedOffset::west(0)
+                .ymd(2019, 1, 28)
+                .and_hms_milli(22, 15, 2, 499)
+        );
         assert_eq!(entry.request.method(), http::Method::GET);
         assert_eq!(entry.request.uri(), "/v1/some/resource");
         assert_eq!(entry.request.version(), http::Version::HTTP_11);
@@ -867,22 +958,46 @@ mod tests {
         assert_eq!(entry.bytes_sent, 16409);
         assert!(entry.referrer.is_none());
         assert!(entry.user_agent.is_some());
-        assert_eq!(entry.user_agent.unwrap(), "Apache-HttpClient/4.3.3 (java 1.5)");
-        assert_eq!(entry.remote_addr, IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182)));
+        assert_eq!(
+            entry.user_agent.unwrap(),
+            "Apache-HttpClient/4.3.3 (java 1.5)"
+        );
+        assert_eq!(
+            entry.remote_addr,
+            IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182))
+        );
         assert_eq!(entry.remote_port, 63326);
-        assert_eq!(entry.backend_addr, Some(IpAddr::V4(Ipv4Addr::new(10, 224, 28, 75))));
+        assert_eq!(
+            entry.backend_addr,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 224, 28, 75)))
+        );
         assert_eq!(entry.backend_port, Some(61022));
         assert_eq!(entry.x_forwarded_for.len(), 3);
-        assert_eq!(entry.x_forwarded_for[0], IpAddr::V4(Ipv4Addr::new(10, 178, 177, 71)));
-        assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(10, 179, 113, 67)));
-        assert_eq!(entry.x_forwarded_for[2], IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182)));
+        assert_eq!(
+            entry.x_forwarded_for[0],
+            IpAddr::V4(Ipv4Addr::new(10, 178, 177, 71))
+        );
+        assert_eq!(
+            entry.x_forwarded_for[1],
+            IpAddr::V4(Ipv4Addr::new(10, 179, 113, 67))
+        );
+        assert_eq!(
+            entry.x_forwarded_for[2],
+            IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182))
+        );
         assert_eq!(entry.x_forwarded_proto, XForwardedProto::HTTPS);
         assert!(entry.vcap_request_id.is_some());
-        assert_eq!(entry.vcap_request_id.unwrap(), "e1604ad1-002c-48ff-6c44-f360e3096911");
+        assert_eq!(
+            entry.vcap_request_id.unwrap(),
+            "e1604ad1-002c-48ff-6c44-f360e3096911"
+        );
         assert!(entry.response_time.is_some());
         assert_eq!(entry.response_time.unwrap(), 0.007799583);
         assert!(entry.app_id.is_some());
-        assert_eq!(entry.app_id.unwrap(), "2c3f3955-d0cd-444c-9350-3fc47bd44eaa");
+        assert_eq!(
+            entry.app_id.unwrap(),
+            "2c3f3955-d0cd-444c-9350-3fc47bd44eaa"
+        );
         assert!(entry.app_index.is_some());
         assert_eq!(entry.app_index.unwrap(), 0);
         assert!(entry.trace_id.is_some());
@@ -895,11 +1010,15 @@ mod tests {
     #[test]
     fn test_parse_gorouter_access_log_without_zipkin_info() {
         let entry = parse_gorouter_log(r#"service.apps-domain.example.com - [2019-01-28T22:15:02.499+0000] "GET /v1/some/resource HTTP/1.1" 200 0 16409 "-" "Apache-HttpClient/4.3.3 (java 1.5)" "10.224.16.182:63326" "10.224.28.75:61022" x_forwarded_for:"10.178.177.71, 10.179.113.67, 10.224.16.182" x_forwarded_proto:"https" vcap_request_id:"e1604ad1-002c-48ff-6c44-f360e3096911" response_time:0.007799583 app_id:"2c3f3955-d0cd-444c-9350-3fc47bd44eaa" app_index:"0" "#);
-        print!("{:#?}", entry);
         assert!(entry.is_ok());
         let entry = entry.unwrap().1;
         assert_eq!(entry.request_host, "service.apps-domain.example.com");
-        assert_eq!(entry.timestamp, FixedOffset::west(0).ymd(2019, 1, 28).and_hms_milli(22, 15, 2, 499));
+        assert_eq!(
+            entry.timestamp,
+            FixedOffset::west(0)
+                .ymd(2019, 1, 28)
+                .and_hms_milli(22, 15, 2, 499)
+        );
         assert_eq!(entry.request.method(), http::Method::GET);
         assert_eq!(entry.request.uri(), "/v1/some/resource");
         assert_eq!(entry.request.version(), http::Version::HTTP_11);
@@ -908,26 +1027,59 @@ mod tests {
         assert_eq!(entry.bytes_sent, 16409);
         assert!(entry.referrer.is_none());
         assert!(entry.user_agent.is_some());
-        assert_eq!(entry.user_agent.unwrap(), "Apache-HttpClient/4.3.3 (java 1.5)");
-        assert_eq!(entry.remote_addr, IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182)));
+        assert_eq!(
+            entry.user_agent.unwrap(),
+            "Apache-HttpClient/4.3.3 (java 1.5)"
+        );
+        assert_eq!(
+            entry.remote_addr,
+            IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182))
+        );
         assert_eq!(entry.remote_port, 63326);
-        assert_eq!(entry.backend_addr, Some(IpAddr::V4(Ipv4Addr::new(10, 224, 28, 75))));
+        assert_eq!(
+            entry.backend_addr,
+            Some(IpAddr::V4(Ipv4Addr::new(10, 224, 28, 75)))
+        );
         assert_eq!(entry.backend_port, Some(61022));
         assert_eq!(entry.x_forwarded_for.len(), 3);
-        assert_eq!(entry.x_forwarded_for[0], IpAddr::V4(Ipv4Addr::new(10, 178, 177, 71)));
-        assert_eq!(entry.x_forwarded_for[1], IpAddr::V4(Ipv4Addr::new(10, 179, 113, 67)));
-        assert_eq!(entry.x_forwarded_for[2], IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182)));
+        assert_eq!(
+            entry.x_forwarded_for[0],
+            IpAddr::V4(Ipv4Addr::new(10, 178, 177, 71))
+        );
+        assert_eq!(
+            entry.x_forwarded_for[1],
+            IpAddr::V4(Ipv4Addr::new(10, 179, 113, 67))
+        );
+        assert_eq!(
+            entry.x_forwarded_for[2],
+            IpAddr::V4(Ipv4Addr::new(10, 224, 16, 182))
+        );
         assert_eq!(entry.x_forwarded_proto, XForwardedProto::HTTPS);
         assert!(entry.vcap_request_id.is_some());
-        assert_eq!(entry.vcap_request_id.unwrap(), "e1604ad1-002c-48ff-6c44-f360e3096911");
+        assert_eq!(
+            entry.vcap_request_id.unwrap(),
+            "e1604ad1-002c-48ff-6c44-f360e3096911"
+        );
         assert!(entry.response_time.is_some());
         assert_eq!(entry.response_time.unwrap(), 0.007799583);
         assert!(entry.app_id.is_some());
-        assert_eq!(entry.app_id.unwrap(), "2c3f3955-d0cd-444c-9350-3fc47bd44eaa");
+        assert_eq!(
+            entry.app_id.unwrap(),
+            "2c3f3955-d0cd-444c-9350-3fc47bd44eaa"
+        );
         assert!(entry.app_index.is_some());
         assert_eq!(entry.app_index.unwrap(), 0);
         assert!(entry.trace_id.is_none());
         assert!(entry.span_id.is_none());
         assert!(entry.parent_span_id.is_none());
+    }
+
+    #[test]
+    fn test_parse_x_forwarded_with_dash_gh_issue_1() {
+        let entry = parse_gorouter_log(r#"35.243.162.217:80 - [2019-10-31T00:11:09.329+0000] "GET / HTTP/1.1" 404 0 69 "-" "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/52.0.2743.116 Safari/537.36" "185.89.158.86:36539" "-" x_forwarded_for:"-" x_forwarded_proto:"-" vcap_request_id:"eb922abf-0f2d-4042-4a84-9161e6ee17a1" response_time:0.000108962 app_id:"-" app_index:"-" x_b3_traceid:"81aa595b268bbe68" x_b3_spanid:"81aa595b268bbe68" x_b3_parentspanid:"-" b3:"81aa595b268bbe68-81aa595b268bbe68""#);
+        assert!(entry.is_ok());
+        let entry = entry.unwrap().1;
+        assert_eq!(entry.x_forwarded_proto, XForwardedProto::UNSPECIFIED);
+        assert_eq!(entry.x_forwarded_for.len(), 0);
     }
 }
