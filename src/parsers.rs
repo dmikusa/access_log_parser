@@ -57,8 +57,8 @@ named!(parse_user <&str, Option<&str>>,
     )
 );
 
-named!(parse_request <&str, http::Request<()>>,
-    map_res!(
+named!(parse_request <&str, super::LogFormatValid>,
+    alt_complete!(
         delimited!(
             tag!(r#"""#),
             do_parse!(
@@ -69,11 +69,18 @@ named!(parse_request <&str, http::Request<()>>,
                     tag!("HTTP/1.1") => { |_| http::Version::HTTP_11 } |
                     tag!("HTTP/2.0") => { |_| http::Version::HTTP_2 }
                 ) >>
-                (http::Request::builder().method(method).uri(path).version(proto_ver).body(()))
-            ),  
+                (match http::Request::builder().method(method).uri(path).version(proto_ver).body(()) {
+                    Ok(req) => super::LogFormatValid::Valid(req),
+                    Err(err) => super::LogFormatValid::InvalidPath(path, err),
+                })
+            ),
             tag!(r#"""#)
-        ),
-        |req| req
+        ) |
+        delimited!(
+            tag!(r#"""#),
+            take_until!(r#"""#),
+            tag!(r#"""#)
+        ) => { |path| super::LogFormatValid::InvalidRequest(path) }
     )
 );
 
@@ -511,10 +518,89 @@ mod tests {
         assert!(res.is_ok());
         let res = res.unwrap();
         assert_eq!(res.0, ""); // nothing left in buffer
-        let res = res.1;
-        assert_eq!(res.method(), http::Method::GET);
-        assert_eq!(res.uri(), "/apache_pb.gif");
-        assert_eq!(res.version(), http::Version::HTTP_10);
+        match res.1 {
+            super::super::LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(req.uri(), "/apache_pb.gif");
+                assert_eq!(req.version(), http::Version::HTTP_10);
+            }
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_request_invalid_1() {
+        let res = parse_request(r#""H\x00\x00\x00tj\xA8\x9E#D\x98+\xCA\xF0\xA7\xBBl\xC5\x19\xD7\x8D\xB6\x18\xEDJ\x1En\xC1\xF9xu[l\xF0E\x1D-j\xEC\xD4xL\xC9r\xC9\x15\x10u\xE0%\x86Rtg\x05fv\x86]%\xCC\x80\x0C\xE8\xCF\xAE\x00\xB5\xC0f\xC8\x8DD\xC5\x09\xF4""#);
+        assert!(res.is_ok());
+        let res = res.unwrap();
+        assert_eq!(res.0, ""); // nothing left in buffer
+        match res.1 {
+            super::super::LogFormatValid::Valid(_) => panic!("should be InalidRequest"),
+            super::super::LogFormatValid::InvalidRequest(path) => {
+                assert_eq!(path, r#"H\x00\x00\x00tj\xA8\x9E#D\x98+\xCA\xF0\xA7\xBBl\xC5\x19\xD7\x8D\xB6\x18\xEDJ\x1En\xC1\xF9xu[l\xF0E\x1D-j\xEC\xD4xL\xC9r\xC9\x15\x10u\xE0%\x86Rtg\x05fv\x86]%\xCC\x80\x0C\xE8\xCF\xAE\x00\xB5\xC0f\xC8\x8DD\xC5\x09\xF4"#);
+            }
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_request_invalid_2() {
+        let res = parse_request(r#""238\x00ll|'|'|SGFjS2VkX0Q3NUU2QUFB|'|'|WIN-QZN7FJ7D1O|'|'|Administrator|'|'|18-11-28|'|'||'|'|Win 7 Ultimate SP1 x64|'|'|No|'|'|S17|'|'|..|'|'|SW5ib3ggLSBPdXRsb29rIERhdGEgRmlsZSAtIE1pY3Jvc29mdCBPdXRsb29rAA==|'|'|""#);
+        assert!(res.is_ok());
+        let res = res.unwrap();
+        assert_eq!(res.0, ""); // nothing left in buffer
+        match res.1 {
+            super::super::LogFormatValid::Valid(_) => panic!("should be InalidRequest"),
+            super::super::LogFormatValid::InvalidRequest(path) => {
+                assert_eq!(path, r#"238\x00ll|'|'|SGFjS2VkX0Q3NUU2QUFB|'|'|WIN-QZN7FJ7D1O|'|'|Administrator|'|'|18-11-28|'|'||'|'|Win 7 Ultimate SP1 x64|'|'|No|'|'|S17|'|'|..|'|'|SW5ib3ggLSBPdXRsb29rIERhdGEgRmlsZSAtIE1pY3Jvc29mdCBPdXRsb29rAA==|'|'|"#);
+            }
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_request_empty() {
+        let res = parse_request(r#""""#);
+        assert!(res.is_ok());
+        let res = res.unwrap();
+        assert_eq!(res.0, ""); // nothing left in buffer
+        match res.1 {
+            super::super::LogFormatValid::Valid(_) => panic!("should be InalidRequest"),
+            super::super::LogFormatValid::InvalidRequest(path) => {
+                assert_eq!(path, "");
+            }
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
+    }
+
+    #[test]
+    fn test_parse_invalid_request_gh_issue_2() {
+        let res = parse_request(
+            r#""GET /?a=fetch&content=<php>die(@md5(HelloThinkCMF))</php> HTTP/1.1""#,
+        );
+        assert!(res.is_ok(), "err: {:?}", res.err());
+        let res = res.unwrap();
+        assert_eq!(res.0, ""); // nothing left in buffer
+        match res.1 {
+            super::super::LogFormatValid::Valid(_) => panic!("should be InvalidPath"),
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                assert_eq!(
+                    path,
+                    "/?a=fetch&content=<php>die(@md5(HelloThinkCMF))</php>"
+                );
+                assert_eq!(err.to_string(), "invalid uri character");
+            }
+        }
     }
 
     #[test]
@@ -744,9 +830,17 @@ mod tests {
                 .ymd(2000, 10, 10)
                 .and_hms(13, 55, 36)
         );
-        assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(entry.request.uri(), "/apache_pb.gif");
-        assert_eq!(entry.request.version(), http::Version::HTTP_10);
+        match entry.request {
+            super::super::LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(req.uri(), "/apache_pb.gif");
+                assert_eq!(req.version(), http::Version::HTTP_10);
+            }
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes, 2326);
     }
@@ -768,9 +862,17 @@ mod tests {
             entry.timestamp,
             FixedOffset::west(0).ymd(2019, 3, 2).and_hms(17, 39, 56)
         );
-        assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(entry.request.uri(), "/");
-        assert_eq!(entry.request.version(), http::Version::HTTP_11);
+        match entry.request {
+            super::super::LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(req.uri(), "/");
+                assert_eq!(req.version(), http::Version::HTTP_11);
+            }
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes, 66503);
     }
@@ -789,9 +891,17 @@ mod tests {
             entry.timestamp,
             FixedOffset::west(0).ymd(2019, 3, 15).and_hms(3, 17, 5)
         );
-        assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(entry.request.uri(), "/");
-        assert_eq!(entry.request.version(), http::Version::HTTP_11);
+        match entry.request {
+            super::super::LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(req.uri(), "/");
+                assert_eq!(req.version(), http::Version::HTTP_11);
+            }
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes, 612);
     }
@@ -811,9 +921,17 @@ mod tests {
                 .ymd(2000, 10, 10)
                 .and_hms(13, 55, 36)
         );
-        assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(entry.request.uri(), "/apache_pb.gif");
-        assert_eq!(entry.request.version(), http::Version::HTTP_10);
+        match entry.request {
+            super::super::LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(req.uri(), "/apache_pb.gif");
+                assert_eq!(req.version(), http::Version::HTTP_10);
+            }
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes, 2326);
         assert!(entry.referrer.is_some());
@@ -839,9 +957,17 @@ mod tests {
             entry.timestamp,
             FixedOffset::west(0).ymd(2019, 3, 15).and_hms(3, 17, 5)
         );
-        assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(entry.request.uri(), "/");
-        assert_eq!(entry.request.version(), http::Version::HTTP_11);
+        match entry.request {
+            super::super::LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(req.uri(), "/");
+                assert_eq!(req.version(), http::Version::HTTP_11);
+            }
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes, 612);
         assert!(entry.referrer.is_none());
@@ -859,12 +985,20 @@ mod tests {
             entry.timestamp,
             FixedOffset::west(0).ymd(2019, 2, 1).and_hms(20, 45, 2)
         );
-        assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(
-            entry.request.uri(),
-            "/v2/spaces/a91c3fa8-e67d-40dd-9d6b-d01aefe5062a/summary"
-        );
-        assert_eq!(entry.request.version(), http::Version::HTTP_11);
+        match entry.request {
+            super::super::LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(
+                    req.uri(),
+                    "/v2/spaces/a91c3fa8-e67d-40dd-9d6b-d01aefe5062a/summary"
+                );
+                assert_eq!(req.version(), http::Version::HTTP_11);
+            }
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes, 53188);
         assert!(entry.referrer.is_none());
@@ -902,12 +1036,20 @@ mod tests {
             entry.timestamp,
             FixedOffset::west(0).ymd(2019, 2, 1).and_hms(15, 26, 42)
         );
-        assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(
-            entry.request.uri(),
-            "/v2/organizations?page=1&results-per-page=1&order-direction=asc"
-        );
-        assert_eq!(entry.request.version(), http::Version::HTTP_11);
+        match entry.request {
+            super::super::LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(
+                    req.uri(),
+                    "/v2/organizations?page=1&results-per-page=1&order-direction=asc"
+                );
+                assert_eq!(req.version(), http::Version::HTTP_11);
+            }
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
         assert_eq!(entry.status_code, http::StatusCode::from_u16(499).unwrap());
         assert_eq!(entry.bytes, 0);
         assert!(entry.referrer.is_none());
@@ -950,9 +1092,17 @@ mod tests {
                 .ymd(2019, 1, 28)
                 .and_hms_milli(22, 15, 2, 499)
         );
-        assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(entry.request.uri(), "/v1/some/resource");
-        assert_eq!(entry.request.version(), http::Version::HTTP_11);
+        match entry.request {
+            super::super::LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(req.uri(), "/v1/some/resource");
+                assert_eq!(req.version(), http::Version::HTTP_11);
+            }
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes_received, 0);
         assert_eq!(entry.bytes_sent, 16409);
@@ -1019,9 +1169,17 @@ mod tests {
                 .ymd(2019, 1, 28)
                 .and_hms_milli(22, 15, 2, 499)
         );
-        assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(entry.request.uri(), "/v1/some/resource");
-        assert_eq!(entry.request.version(), http::Version::HTTP_11);
+        match entry.request {
+            super::super::LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(req.uri(), "/v1/some/resource");
+                assert_eq!(req.version(), http::Version::HTTP_11);
+            }
+            super::super::LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            super::super::LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
         assert_eq!(entry.status_code, http::StatusCode::OK);
         assert_eq!(entry.bytes_received, 0);
         assert_eq!(entry.bytes_sent, 16409);

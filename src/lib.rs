@@ -23,7 +23,7 @@ pub struct CommonLogEntry<'a> {
     pub identd_user: Option<&'a str>,
     pub user: Option<&'a str>,
     pub timestamp: DateTime<FixedOffset>,
-    pub request: http::Request<()>,
+    pub request: LogFormatValid<'a>,
     pub status_code: http::StatusCode,
     pub bytes: u32,
 }
@@ -34,7 +34,7 @@ pub struct CombinedLogEntry<'a> {
     pub identd_user: Option<&'a str>,
     pub user: Option<&'a str>,
     pub timestamp: DateTime<FixedOffset>,
-    pub request: http::Request<()>,
+    pub request: LogFormatValid<'a>,
     pub status_code: http::StatusCode,
     pub bytes: u32,
     pub referrer: Option<http::Uri>,
@@ -45,7 +45,7 @@ pub struct CombinedLogEntry<'a> {
 pub struct CloudControllerLogEntry<'a> {
     pub request_host: &'a str,
     pub timestamp: DateTime<FixedOffset>,
-    pub request: http::Request<()>,
+    pub request: LogFormatValid<'a>,
     pub status_code: http::StatusCode,
     pub bytes: u32,
     pub referrer: Option<http::Uri>,
@@ -59,7 +59,7 @@ pub struct CloudControllerLogEntry<'a> {
 pub struct GorouterLogEntry<'a> {
     pub request_host: &'a str,
     pub timestamp: DateTime<FixedOffset>,
-    pub request: http::Request<()>,
+    pub request: LogFormatValid<'a>,
     pub status_code: http::StatusCode,
     pub bytes_received: u32,
     pub bytes_sent: u32,
@@ -78,6 +78,13 @@ pub struct GorouterLogEntry<'a> {
     pub trace_id: Option<&'a str>,
     pub span_id: Option<&'a str>,
     pub parent_span_id: Option<&'a str>,
+}
+
+#[derive(Debug)]
+pub enum LogFormatValid<'a> {
+    Valid(http::Request<()>),
+    InvalidPath(&'a str, http::Error),
+    InvalidRequest(&'a str),
 }
 
 #[derive(Debug)]
@@ -169,11 +176,19 @@ mod tests {
                 entry.timestamp,
                 FixedOffset::west(0).ymd(2019, 3, 15).and_hms(3, 17, 5)
             );
-            assert_eq!(entry.request.method(), http::Method::GET);
-            assert_eq!(entry.request.uri(), "/");
-            assert_eq!(entry.request.version(), http::Version::HTTP_11);
-            assert_eq!(entry.status_code, http::StatusCode::OK);
-            assert_eq!(entry.bytes, 612);
+            match entry.request {
+                LogFormatValid::Valid(req) => {
+                    assert_eq!(req.method(), http::Method::GET);
+                    assert_eq!(req.uri(), "/");
+                    assert_eq!(req.version(), http::Version::HTTP_11);
+                    assert_eq!(entry.status_code, http::StatusCode::OK);
+                    assert_eq!(entry.bytes, 612);
+                }
+                LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+                LogFormatValid::InvalidPath(path, err) => {
+                    panic!("invalid request [{}], err: {:?}", path, err)
+                }
+            }
         }
     }
 
