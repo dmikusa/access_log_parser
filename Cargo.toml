@@ -11,6 +11,6 @@ keywords = ["access", "logs", "parse"]
 categories = ["parsing", "parser-implementations"]
 
 [dependencies]
-nom = "^4.0"
+nom = "^4"
 chrono = "^0.4"
 http = "^0.1"
