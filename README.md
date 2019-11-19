@@ -8,12 +8,12 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-access_log_parser = "0.1"
+access_log_parser = "0.4"
 ```
 
 Parse a log line:
 
-```
+```rust
     let entry = parse(
         LogType::CommonLog,
         r#"127.0.0.1 - - [15/Mar/2019:03:17:05 +0000] "GET / HTTP/1.1" 200 612"#,
@@ -26,11 +26,19 @@ Parse a log line:
             entry.timestamp,
             FixedOffset::west(0).ymd(2019, 3, 15).and_hms(3, 17, 5)
         );
-        assert_eq!(entry.request.method(), http::Method::GET);
-        assert_eq!(entry.request.uri(), "/");
-        assert_eq!(entry.request.version(), http::Version::HTTP_11);
-        assert_eq!(entry.status_code, http::StatusCode::OK);
-        assert_eq!(entry.bytes, 612);
+        match entry.request {
+            LogFormatValid::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(req.uri(), "/");
+                assert_eq!(req.version(), http::Version::HTTP_11);
+                assert_eq!(entry.status_code, http::StatusCode::OK);
+                assert_eq!(entry.bytes, 612);
+            }
+            LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+            LogFormatValid::InvalidPath(path, err) => {
+                panic!("invalid request [{}], err: {:?}", path, err)
+            }
+        }
     }
 ```
 
