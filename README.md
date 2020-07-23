@@ -8,7 +8,7 @@ Add the following to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-access_log_parser = "0.4"
+access_log_parser = "0.5"
 ```
 
 Parse a log line:
