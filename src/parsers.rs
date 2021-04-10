@@ -91,9 +91,9 @@ named!(parse_http_status <&str, http::StatusCode>,
     )
 );
 
-named!(parse_bytes <&str, u32>,
+named!(parse_bytes <&str, u64>,
     flat_map!(alt_complete!(take_until_and_consume!(" ") | rest),
-        alt_complete!(parse_to!(u32) | map!(tag!("-"), |_| 0))
+        alt_complete!(parse_to!(u64) | map!(tag!("-"), |_| 0))
         )
 );
 
@@ -664,6 +664,11 @@ mod tests {
         assert_eq!(parse_bytes("-"), Ok(("", 0)));
         assert_eq!(parse_bytes("- "), Ok(("", 0)));
         assert_eq!(parse_bytes(""), Err(Error(Code("", Alt))));
+    }
+
+    #[test]
+    fn test_parse_bytes_large() {
+        assert_eq!(parse_bytes("8296735593"), Ok(("", 8296735593)));
     }
 
     #[test]

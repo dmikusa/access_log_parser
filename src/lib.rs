@@ -25,7 +25,7 @@ pub struct CommonLogEntry<'a> {
     pub timestamp: DateTime<FixedOffset>,
     pub request: LogFormatValid<'a>,
     pub status_code: http::StatusCode,
-    pub bytes: u32,
+    pub bytes: u64,
 }
 
 #[derive(Debug)]
@@ -36,7 +36,7 @@ pub struct CombinedLogEntry<'a> {
     pub timestamp: DateTime<FixedOffset>,
     pub request: LogFormatValid<'a>,
     pub status_code: http::StatusCode,
-    pub bytes: u32,
+    pub bytes: u64,
     pub referrer: Option<http::Uri>,
     pub user_agent: Option<&'a str>,
 }
@@ -47,7 +47,7 @@ pub struct CloudControllerLogEntry<'a> {
     pub timestamp: DateTime<FixedOffset>,
     pub request: LogFormatValid<'a>,
     pub status_code: http::StatusCode,
-    pub bytes: u32,
+    pub bytes: u64,
     pub referrer: Option<http::Uri>,
     pub user_agent: Option<&'a str>,
     pub x_forwarded_for: Vec<IpAddr>,
@@ -61,8 +61,8 @@ pub struct GorouterLogEntry<'a> {
     pub timestamp: DateTime<FixedOffset>,
     pub request: LogFormatValid<'a>,
     pub status_code: http::StatusCode,
-    pub bytes_received: u32,
-    pub bytes_sent: u32,
+    pub bytes_received: u64,
+    pub bytes_sent: u64,
     pub referrer: Option<http::Uri>,
     pub user_agent: Option<&'a str>,
     pub remote_addr: IpAddr,
@@ -226,6 +226,30 @@ mod tests {
         );
         assert!(entry.is_err());
         assert_eq!(entry.unwrap_err(), Error(Code("abc", nom::ErrorKind::Alt)));
+    }
+
+    #[test]
+    fn test_parse_log_large_file() {
+        let entry = parse(
+            LogType::CommonLog,
+            r#"1.2.3.4 - - [24/Mar/2021:18:38:22 +0100] "GET /large-file.zst HTTP/1.1" 200 8296735593"#,
+        );
+        assert!(entry.is_ok());
+        if let LogEntry::CommonLog(entry) = entry.unwrap() {
+            match entry.request {
+                LogFormatValid::Valid(req) => {
+                    assert_eq!(req.method(), http::Method::GET);
+                    assert_eq!(req.uri(), "/large-file.zst");
+                    assert_eq!(req.version(), http::Version::HTTP_11);
+                    assert_eq!(entry.status_code, http::StatusCode::OK);
+                    assert_eq!(entry.bytes, 8296735593);
+                }
+                LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
+                LogFormatValid::InvalidPath(path, err) => {
+                    panic!("invalid request [{}], err: {:?}", path, err)
+                }
+            }
+        }
     }
 
     #[test]
