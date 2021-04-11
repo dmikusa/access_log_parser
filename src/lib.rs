@@ -195,6 +195,40 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_log_request_timeout() {
+        // default "common log" format uses "%b", which will output "-"
+        // if no data was returned to the client. See:
+        // https://httpd.apache.org/docs/2.4/logs.html
+        let entry = parse(
+            LogType::CommonLog,
+            r#"1.2.3.4 - - [28/Mar/2021:19:04:20 +0200] "-" 408 -"#,
+        );
+        assert!(entry.is_ok());
+        if let LogEntry::CommonLog(entry) = entry.unwrap() {
+            assert_eq!(entry.status_code, http::StatusCode::REQUEST_TIMEOUT);
+            assert_eq!(entry.bytes, 0);
+        }
+
+        // another test with extra space at the end
+        let entry = parse(
+            LogType::CommonLog,
+            r#"1.2.3.4 - - [28/Mar/2021:19:04:20 +0200] "-" 408 - "#,
+        );
+        assert!(entry.is_ok());
+    }
+
+    #[test]
+    fn test_parse_log_request_timeout_broken() {
+        // use abc instead of proper bytes or "-"
+        let entry = parse(
+            LogType::CommonLog,
+            r#"1.2.3.4 - - [28/Mar/2021:19:04:20 +0200] "-" 408 abc"#,
+        );
+        assert!(entry.is_err());
+        assert_eq!(entry.unwrap_err(), Error(Code("abc", nom::ErrorKind::Alt)));
+    }
+
+    #[test]
     fn test_parse_log_type_incomplete() {
         let entry = parse(LogType::CommonLog, r#"lskdjflkjsdf"#);
         assert!(entry.is_err());

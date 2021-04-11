@@ -92,7 +92,9 @@ named!(parse_http_status <&str, http::StatusCode>,
 );
 
 named!(parse_bytes <&str, u32>,
-    flat_map!(alt_complete!(take_until_and_consume!(" ") | rest), parse_to!(u32))
+    flat_map!(alt_complete!(take_until_and_consume!(" ") | rest),
+        alt_complete!(parse_to!(u32) | map!(tag!("-"), |_| 0))
+        )
 );
 
 named!(parse_referrer <&str, Option<http::Uri>>,
@@ -485,7 +487,7 @@ mod tests {
     use super::*;
     use nom::Context::Code;
     use nom::Err::Error;
-    use nom::ErrorKind::{Alt, MapRes, ParseTo};
+    use nom::ErrorKind::{Alt, MapRes};
     use std::net::{Ipv4Addr, Ipv6Addr};
 
     #[test]
@@ -659,7 +661,9 @@ mod tests {
     fn test_parse_bytes() {
         assert_eq!(parse_bytes("1234"), Ok(("", 1234)));
         assert_eq!(parse_bytes("1234 "), Ok(("", 1234)));
-        assert_eq!(parse_bytes(""), Err(Error(Code("", ParseTo))));
+        assert_eq!(parse_bytes("-"), Ok(("", 0)));
+        assert_eq!(parse_bytes("- "), Ok(("", 0)));
+        assert_eq!(parse_bytes(""), Err(Error(Code("", Alt))));
     }
 
     #[test]
