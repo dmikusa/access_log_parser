@@ -14,6 +14,11 @@ access_log_parser = "0.6"
 Parse a log line:
 
 ```rust
+use access_log_parser::{LogEntry, LogFormatValid, LogType, parse};
+use chrono::prelude::*;
+use std::net::Ipv4Addr;
+
+fn main() {
     let entry = parse(
         LogType::CommonLog,
         r#"127.0.0.1 - - [15/Mar/2019:03:17:05 +0000] "GET / HTTP/1.1" 200 612"#,
@@ -40,6 +45,7 @@ Parse a log line:
             }
         }
     }
+}
 ```
 
 ## Features
