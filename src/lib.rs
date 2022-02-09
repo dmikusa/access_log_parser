@@ -1,4 +1,4 @@
-// Copyright 2019 Daniel Mikusa
+// Copyright 2022 Daniel Mikusa
 
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -11,11 +11,15 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+mod parsers;
+
 use chrono::prelude::*;
+use nom::error::{self, VerboseError};
+use nom::Finish;
+use parsers::compound;
 use std::net::IpAddr;
 use std::str::FromStr;
-
-mod parsers;
+use thiserror::Error;
 
 #[derive(Debug)]
 pub struct CommonLogEntry<'a> {
@@ -23,7 +27,7 @@ pub struct CommonLogEntry<'a> {
     pub identd_user: Option<&'a str>,
     pub user: Option<&'a str>,
     pub timestamp: DateTime<FixedOffset>,
-    pub request: LogFormatValid<'a>,
+    pub request: RequestResult<'a>,
     pub status_code: http::StatusCode,
     pub bytes: u64,
 }
@@ -34,7 +38,7 @@ pub struct CombinedLogEntry<'a> {
     pub identd_user: Option<&'a str>,
     pub user: Option<&'a str>,
     pub timestamp: DateTime<FixedOffset>,
-    pub request: LogFormatValid<'a>,
+    pub request: RequestResult<'a>,
     pub status_code: http::StatusCode,
     pub bytes: u64,
     pub referrer: Option<http::Uri>,
@@ -45,21 +49,21 @@ pub struct CombinedLogEntry<'a> {
 pub struct CloudControllerLogEntry<'a> {
     pub request_host: &'a str,
     pub timestamp: DateTime<FixedOffset>,
-    pub request: LogFormatValid<'a>,
+    pub request: RequestResult<'a>,
     pub status_code: http::StatusCode,
     pub bytes: u64,
     pub referrer: Option<http::Uri>,
     pub user_agent: Option<&'a str>,
     pub x_forwarded_for: Vec<IpAddr>,
     pub vcap_request_id: Option<&'a str>,
-    pub response_time: Option<f32>,
+    pub response_time: Option<f64>,
 }
 
 #[derive(Debug)]
 pub struct GorouterLogEntry<'a> {
     pub request_host: &'a str,
     pub timestamp: DateTime<FixedOffset>,
-    pub request: LogFormatValid<'a>,
+    pub request: RequestResult<'a>,
     pub status_code: http::StatusCode,
     pub bytes_received: u64,
     pub bytes_sent: u64,
@@ -72,10 +76,11 @@ pub struct GorouterLogEntry<'a> {
     pub x_forwarded_for: Vec<IpAddr>,
     pub x_forwarded_proto: XForwardedProto,
     pub vcap_request_id: Option<&'a str>,
-    pub response_time: Option<f32>,
-    pub gorouter_time: Option<f32>,
+    pub response_time: Option<f64>,
+    pub gorouter_time: Option<f64>,
     pub app_id: Option<&'a str>,
     pub app_index: Option<u16>,
+    pub instance_id: Option<&'a str>,
     pub x_cf_routererror: Option<&'a str>,
     pub trace_id: Option<&'a str>,
     pub span_id: Option<&'a str>,
@@ -83,7 +88,7 @@ pub struct GorouterLogEntry<'a> {
 }
 
 #[derive(Debug)]
-pub enum LogFormatValid<'a> {
+pub enum RequestResult<'a> {
     Valid(http::Request<()>),
     InvalidPath(&'a str, http::Error),
     InvalidRequest(&'a str),
@@ -132,177 +137,97 @@ impl Default for XForwardedProto {
     }
 }
 
-pub fn parse(log_type: LogType, line: &str) -> Result<LogEntry, nom::Err<&str>> {
-    match log_type {
-        LogType::CommonLog => match parsers::parse_common_log(line) {
-            Ok((_remaining, log)) => Ok(LogEntry::CommonLog(log)),
-            Err(err) => Err(err),
-        },
-        LogType::CombinedLog => match parsers::parse_combined_log(line) {
-            Ok((_remaining, log)) => Ok(LogEntry::CombinedLog(log)),
-            Err(err) => Err(err),
-        },
-        LogType::CloudControllerLog => match parsers::parse_cloud_controller_log(line) {
-            Ok((_remaining, log)) => Ok(LogEntry::CloudControllerLog(log)),
-            Err(err) => Err(err),
-        },
-        LogType::GorouterLog => match parsers::parse_gorouter_log(line) {
-            Ok((_remaining, log)) => Ok(LogEntry::GorouterLog(log)),
-            Err(err) => Err(err),
-        },
-    }
+/// AccessLogError enumerates all possible errors returned by this library
+#[derive(Error, Debug, PartialEq)]
+pub enum AccessLogError {
+    #[error("Parse error")]
+    ParseError { msg: String },
+}
+
+pub fn parse(log_type: LogType, line: &str) -> Result<LogEntry, AccessLogError> {
+    Ok(match log_type {
+        LogType::CommonLog => LogEntry::CommonLog(
+            compound::common_log::<VerboseError<&str>>(line)
+                .finish()
+                .map_err(|e| AccessLogError::ParseError {
+                    msg: error::convert_error(line, e),
+                })?
+                .1,
+        ),
+        LogType::CombinedLog => LogEntry::CombinedLog(
+            compound::combined_log::<VerboseError<&str>>(line)
+                .finish()
+                .map_err(|e| AccessLogError::ParseError {
+                    msg: error::convert_error(line, e),
+                })?
+                .1,
+        ),
+        LogType::CloudControllerLog => LogEntry::CloudControllerLog(
+            compound::cloud_controller_log::<VerboseError<&str>>(line)
+                .finish()
+                .map_err(|e| AccessLogError::ParseError {
+                    msg: error::convert_error(line, e),
+                })?
+                .1,
+        ),
+        LogType::GorouterLog => LogEntry::GorouterLog(
+            compound::gorouter_log::<VerboseError<&str>>(line)
+                .finish()
+                .map_err(|e| AccessLogError::ParseError {
+                    msg: error::convert_error(line, e),
+                })?
+                .1,
+        ),
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use nom::Context::Code;
-    use nom::Err::Error;
-    use nom::Err::Incomplete;
-    use nom::ErrorKind::Tag;
-    use nom::Needed::Size;
-    use std::net::Ipv4Addr;
+    use crate::{parse, AccessLogError, LogType};
 
     #[test]
-    fn test_parse_log_type() {
+    fn parse_common_log() {
         let entry = parse(
             LogType::CommonLog,
             r#"127.0.0.1 - - [15/Mar/2019:03:17:05 +0000] "GET / HTTP/1.1" 200 612"#,
         );
-        assert!(entry.is_ok());
-        if let LogEntry::CommonLog(entry) = entry.unwrap() {
-            assert_eq!(entry.ip, Ipv4Addr::new(127, 0, 0, 1));
-            assert!(entry.identd_user.is_none());
-            assert!(entry.user.is_none());
-            assert_eq!(
-                entry.timestamp,
-                FixedOffset::west(0).ymd(2019, 3, 15).and_hms(3, 17, 5)
-            );
-            match entry.request {
-                LogFormatValid::Valid(req) => {
-                    assert_eq!(req.method(), http::Method::GET);
-                    assert_eq!(req.uri(), "/");
-                    assert_eq!(req.version(), http::Version::HTTP_11);
-                    assert_eq!(entry.status_code, http::StatusCode::OK);
-                    assert_eq!(entry.bytes, 612);
-                }
-                LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
-                LogFormatValid::InvalidPath(path, err) => {
-                    panic!("invalid request [{}], err: {:?}", path, err)
-                }
-            }
-        }
+        assert!(entry.is_ok(), "{}", entry.err().unwrap());
     }
 
     #[test]
-    fn test_parse_log_request_timeout() {
-        // default "common log" format uses "%b", which will output "-"
-        // if no data was returned to the client. See:
-        // https://httpd.apache.org/docs/2.4/logs.html
+    fn parse_combined_log() {
         let entry = parse(
-            LogType::CommonLog,
-            r#"1.2.3.4 - - [28/Mar/2021:19:04:20 +0200] "-" 408 -"#,
+            LogType::CombinedLog,
+            r#"127.0.0.1 - - [15/Mar/2019:03:17:05 +0000] "GET / HTTP/1.1" 200 612 "http://www.example.com/foo" "foo user agent""#,
         );
-        assert!(entry.is_ok());
-        if let LogEntry::CommonLog(entry) = entry.unwrap() {
-            assert_eq!(entry.status_code, http::StatusCode::REQUEST_TIMEOUT);
-            assert_eq!(entry.bytes, 0);
-        }
-
-        // another test with extra space at the end
-        let entry = parse(
-            LogType::CommonLog,
-            r#"1.2.3.4 - - [28/Mar/2021:19:04:20 +0200] "-" 408 - "#,
-        );
-        assert!(entry.is_ok());
+        assert!(entry.is_ok(), "{}", entry.err().unwrap());
     }
 
     #[test]
-    fn test_parse_log_request_timeout_broken() {
-        // use abc instead of proper bytes or "-"
-        let entry = parse(
-            LogType::CommonLog,
-            r#"1.2.3.4 - - [28/Mar/2021:19:04:20 +0200] "-" 408 abc"#,
-        );
-        assert!(entry.is_err());
-        assert_eq!(entry.unwrap_err(), Error(Code("abc", nom::ErrorKind::Alt)));
-    }
-
-    #[test]
-    fn test_parse_log_large_file() {
-        let entry = parse(
-            LogType::CommonLog,
-            r#"1.2.3.4 - - [24/Mar/2021:18:38:22 +0100] "GET /large-file.zst HTTP/1.1" 200 8296735593"#,
-        );
-        assert!(entry.is_ok());
-        if let LogEntry::CommonLog(entry) = entry.unwrap() {
-            match entry.request {
-                LogFormatValid::Valid(req) => {
-                    assert_eq!(req.method(), http::Method::GET);
-                    assert_eq!(req.uri(), "/large-file.zst");
-                    assert_eq!(req.version(), http::Version::HTTP_11);
-                    assert_eq!(entry.status_code, http::StatusCode::OK);
-                    assert_eq!(entry.bytes, 8296735593);
-                }
-                LogFormatValid::InvalidRequest(path) => panic!("invalid path [{}]", path),
-                LogFormatValid::InvalidPath(path, err) => {
-                    panic!("invalid request [{}], err: {:?}", path, err)
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_parse_log_type_incomplete() {
-        let entry = parse(LogType::CommonLog, r#"lskdjflkjsdf"#);
-        assert!(entry.is_err());
-        assert_eq!(entry.unwrap_err(), Incomplete(Size(1)));
-    }
-
-    #[test]
-    fn test_parse_log_type_fails() {
-        // it's missing the leading `[`
-        let entry = parse(
-            LogType::CommonLog,
-            r#"127.0.0.1 - - 15/Mar/2019:03:17:05 +0000] "GET / HTTP/1.1" 200 612"#,
-        );
-        assert!(entry.is_err());
-        assert_eq!(
-            entry.unwrap_err(),
-            Error(Code(
-                "15/Mar/2019:03:17:05 +0000] \"GET / HTTP/1.1\" 200 612",
-                Tag
-            ))
-        );
-    }
-
-    #[test]
-    fn test_parse_cloud_controller() {
+    fn parse_cloud_controller() {
         let entry = parse(
             LogType::CloudControllerLog,
             r#"api.system_domain.local - [01/Feb/2019:20:45:02 +0000] "GET /v2/spaces/a91c3fa8-e67d-40dd-9d6b-d01aefe5062a/summary HTTP/1.1" 200 53188 "-" "cf_exporter/" 172.26.28.115, 172.26.31.254, 172.26.30.2 vcap_request_id:49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92 response_time:0.252"#,
         );
-        println!("{:#?}", entry);
-        assert!(entry.is_ok());
+        assert!(entry.is_ok(), "{}", entry.err().unwrap());
     }
 
     #[test]
-    fn test_parse_gorouter() {
+    fn parse_gorouter() {
         let entry = parse(
             LogType::GorouterLog,
             r#"test.app_domain.example.com - [2019-01-28T22:15:08.622+0000] "PUT /eureka/apps/SERVICE-REGISTRY/service-registry:-1532850760?status=UP&lastDirtyTimestamp=1547950465746 HTTP/1.1" 404 0 116 "-" "Java-EurekaClient/v1.7.0" "10.224.20.205:23150" "-" x_forwarded_for:"10.179.113.63" x_forwarded_proto:"https" vcap_request_id:"762147e9-ecb8-41b2-4acd-2adc68122486" response_time:0.000119524 app_id:"-" app_index:"-" x_b3_traceid:"59ece3a70be6b6db" x_b3_spanid:"59ece3a70be6b6db" x_b3_parentspanid:"-""#,
         );
-        println!("{:#?}", entry);
-        assert!(entry.is_ok());
+        assert!(entry.is_ok(), "{}", entry.err().unwrap());
     }
 
     #[test]
-    fn test_parse_gorouterv2() {
-        let entry = parse(
-            LogType::GorouterLog,
-            r#"some-app.apps.example.com - [2020-07-22T16:53:02.802271327Z] "GET /js/app.js HTTP/1.1" 200 0 11972 "-" "Mozilla/4.0 (compatible; MSIE 7.0; Windows NT 10.0; WOW64; Trident/7.0; .NET4.0C; .NET4.0E; .NET CLR 2.0.50727; .NET CLR 3.0.30729; .NET CLR 3.5.30729; InfoPath.3; wbx 1.0.0; wbxapp 1.0.0)" "10.183.132.37:52748" "10.184.164.51:61022" x_forwarded_for:"10.183.183.140, 10.183.132.37" x_forwarded_proto:"https" vcap_request_id:"50f2d439-2819-4776-6634-8ff52934848e" response_time:0.004141 gorouter_time:0.000260 app_id:"e2850cd4-ed08-4e67-9156-0649d3cec9e0" app_index:"1" x_cf_routererror:"-" x_b3_traceid:"25d13e06502c7f3d" x_b3_spanid:"25d13e06502c7f3d" x_b3_parentspanid:"-" b3:"25d13e06502c7f3d-25d13e06502c7f3d""#,
+    fn parse_error() {
+        let entry = parse(LogType::CommonLog, "foo bar");
+        assert!(entry.is_err());
+        assert_eq!(
+            entry.unwrap_err(),
+            AccessLogError::ParseError { msg: "0: at line 1, in MapRes:\nfoo bar\n^\n\n1: at line 1, in ip:\nfoo bar\n^\n\n2: at line 1, in common_log:\nfoo bar\n^\n\n".into() }
         );
-        println!("{:#?}", entry);
-        assert!(entry.is_ok());
     }
 }
