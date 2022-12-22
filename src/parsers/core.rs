@@ -481,7 +481,7 @@ where
 #[cfg(test)]
 mod core_tests {
     use super::*;
-    use chrono::{FixedOffset, TimeZone};
+    use chrono::{FixedOffset, NaiveDate, TimeZone};
     use nom::error::{Error, ErrorKind, VerboseError};
     use nom::Err;
     use std::net::{IpAddr, Ipv4Addr};
@@ -496,9 +496,10 @@ mod core_tests {
 
     #[test]
     fn parse_date() {
-        let expected = FixedOffset::west(7 * 3600)
-            .ymd(2000, 7, 25)
-            .and_hms(13, 55, 36);
+        let expected = FixedOffset::west_opt(7 * 3600)
+            .unwrap()
+            .with_ymd_and_hms(2000, 7, 25, 13, 55, 36)
+            .unwrap();
 
         assert_eq!(
             date::<VerboseError<&str>>("[25/Jul/2000:13:55:36 -0700]"),
@@ -519,9 +520,15 @@ mod core_tests {
             Ok(("", expected))
         );
 
-        let expected = FixedOffset::west(7 * 3600)
-            .ymd(2000, 7, 25)
-            .and_hms_milli(13, 55, 36, 499);
+        let expected = FixedOffset::west_opt(7 * 3600)
+            .unwrap()
+            .from_local_datetime(
+                &NaiveDate::from_ymd_opt(2000, 7, 25)
+                    .unwrap()
+                    .and_hms_milli_opt(13, 55, 36, 499)
+                    .unwrap(),
+            )
+            .unwrap();
 
         assert_eq!(
             date::<VerboseError<&str>>("[2000-07-25T13:55:36.499-0700]"),

@@ -12,6 +12,10 @@ categories = ["parsing", "parser-implementations"]
 
 [dependencies]
 nom = "7.1"
-chrono = "0.4"
 http = "0.2"
 thiserror = "1.0"
+
+[dependencies.chrono]
+version = "0.4"
+default-features = false
+features = ["clock"]

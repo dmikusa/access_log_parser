@@ -265,7 +265,7 @@ where
 mod tests {
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 
-    use chrono::{FixedOffset, TimeZone};
+    use chrono::{FixedOffset, NaiveDate, TimeZone};
     use http::Uri;
     use nom::error::VerboseError;
 
@@ -290,9 +290,10 @@ mod tests {
         assert_eq!(e.user.unwrap_or("<wrong user>"), "frank");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(7 * 3600)
-                .ymd(2000, 10, 10)
-                .and_hms(13, 55, 36)
+            FixedOffset::west_opt(7 * 3600)
+                .unwrap()
+                .with_ymd_and_hms(2000, 10, 10, 13, 55, 36)
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -322,7 +323,10 @@ mod tests {
         assert_eq!(e.user, None);
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(0).ymd(2019, 3, 2).and_hms(17, 39, 56)
+            FixedOffset::west_opt(0)
+                .unwrap()
+                .with_ymd_and_hms(2019, 3, 2, 17, 39, 56)
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -347,9 +351,10 @@ mod tests {
         assert_eq!(e.user.unwrap_or("<wrong user>"), "frank");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(7 * 3600)
-                .ymd(2000, 10, 10)
-                .and_hms(13, 55, 36)
+            FixedOffset::west_opt(7 * 3600)
+                .unwrap()
+                .with_ymd_and_hms(2000, 10, 10, 13, 55, 36)
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -369,6 +374,36 @@ mod tests {
     }
 
     #[test]
+    fn parse_combined_log_entry_gh_issue_7() {
+        let data = r#"127.0.0.1 - - [13/Jun/2022:05:26:31 +0100] "GET / HTTP/1.1" 301 166 "example.com" "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36" 0.000 - 0e28d0563f4b737fce783ca10208cf8a - "-""#;
+        let res = combined_log::<VerboseError<&str>>(data);
+        assert!(res.is_ok(), "{}", res.unwrap_err());
+        let e = res.unwrap().1;
+        assert_eq!(e.ip, IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)));
+        assert_eq!(e.identd_user, None);
+        assert_eq!(e.user, None);
+        assert_eq!(
+            e.timestamp,
+            FixedOffset::east_opt(3600)
+                .unwrap()
+                .with_ymd_and_hms(2022, 6, 13, 5, 26, 31)
+                .unwrap()
+        );
+        match e.request {
+            RequestResult::Valid(req) => {
+                assert_eq!(req.method(), http::Method::GET);
+                assert_eq!(req.uri(), "/");
+                assert_eq!(req.version(), http::Version::HTTP_11);
+            }
+            _ => panic!("invalid request: {:?}", e.request),
+        }
+        assert_eq!(e.status_code, http::StatusCode::MOVED_PERMANENTLY);
+        assert_eq!(e.bytes, 166);
+        assert_eq!(e.referrer.unwrap(), "example.com".parse::<Uri>().unwrap());
+        assert_eq!(e.user_agent.unwrap(), "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/92.0.4515.131 Safari/537.36");
+    }
+
+    #[test]
     fn parse_cloud_controller_log_entry() {
         let data = r#"api.system_domain.local - [01/Feb/2019:20:45:02 +0000] "GET /v2/spaces/a91c3fa8-e67d-40dd-9d6b-d01aefe5062a/summary HTTP/1.1" 200 53188 "-" "cf_exporter/" 172.26.28.115, 172.26.31.254, 172.26.30.2 vcap_request_id:49d47ebe-a54f-4f84-66a7-f1262800588b::67ee0d7f-08bd-401f-a46c-24d7501a5f92 response_time:0.252"#;
         let res = cloud_controller_log::<VerboseError<&str>>(data);
@@ -377,7 +412,10 @@ mod tests {
         assert_eq!(e.request_host, "api.system_domain.local");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(0).ymd(2019, 2, 1).and_hms(20, 45, 2)
+            FixedOffset::west_opt(0)
+                .unwrap()
+                .with_ymd_and_hms(2019, 2, 1, 20, 45, 2)
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -423,7 +461,10 @@ mod tests {
         assert_eq!(e.request_host, "api.system_domain.local");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(0).ymd(2019, 2, 1).and_hms(15, 26, 42)
+            FixedOffset::west_opt(0)
+                .unwrap()
+                .with_ymd_and_hms(2019, 2, 1, 15, 26, 42)
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -474,9 +515,15 @@ mod tests {
         assert_eq!(e.request_host, "service.apps-domain.example.com");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(0)
-                .ymd(2019, 1, 28)
-                .and_hms_milli(22, 15, 2, 499)
+            FixedOffset::west_opt(0)
+                .unwrap()
+                .from_local_datetime(
+                    &NaiveDate::from_ymd_opt(2019, 1, 28)
+                        .unwrap()
+                        .and_hms_milli_opt(22, 15, 2, 499)
+                        .unwrap()
+                )
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -533,9 +580,15 @@ mod tests {
         assert_eq!(e.request_host, "service.apps-domain.example.com");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(0)
-                .ymd(2019, 1, 28)
-                .and_hms_milli(22, 15, 2, 499)
+            FixedOffset::west_opt(0)
+                .unwrap()
+                .from_local_datetime(
+                    &NaiveDate::from_ymd_opt(2019, 1, 28)
+                        .unwrap()
+                        .and_hms_milli_opt(22, 15, 2, 499)
+                        .unwrap()
+                )
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -592,9 +645,15 @@ mod tests {
         assert_eq!(e.request_host, "doppler.example.com:4443");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(0)
-                .ymd(2019, 1, 28)
-                .and_hms_milli(18, 35, 38, 720)
+            FixedOffset::west_opt(0)
+                .unwrap()
+                .from_local_datetime(
+                    &NaiveDate::from_ymd_opt(2019, 1, 28)
+                        .unwrap()
+                        .and_hms_milli_opt(18, 35, 38, 720)
+                        .unwrap()
+                )
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -646,9 +705,15 @@ mod tests {
         assert_eq!(e.request_host, "php-info.cfapps.io");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(0)
-                .ymd(2020, 7, 23)
-                .and_hms_milli(19, 46, 59, 42)
+            FixedOffset::west_opt(0)
+                .unwrap()
+                .from_local_datetime(
+                    &NaiveDate::from_ymd_opt(2020, 7, 23)
+                        .unwrap()
+                        .and_hms_milli_opt(19, 46, 59, 42)
+                        .unwrap()
+                )
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -702,9 +767,15 @@ mod tests {
         assert_eq!(e.request_host, "php-info.cfapps.io");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(0)
-                .ymd(2020, 7, 23)
-                .and_hms_milli(19, 46, 59, 42)
+            FixedOffset::west_opt(0)
+                .unwrap()
+                .from_local_datetime(
+                    &NaiveDate::from_ymd_opt(2020, 7, 23)
+                        .unwrap()
+                        .and_hms_milli_opt(19, 46, 59, 42)
+                        .unwrap()
+                )
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -759,9 +830,15 @@ mod tests {
         assert_eq!(e.request_host, "35.243.162.217:80");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(0)
-                .ymd(2019, 10, 31)
-                .and_hms_milli(0, 11, 9, 329)
+            FixedOffset::west_opt(0)
+                .unwrap()
+                .from_local_datetime(
+                    &NaiveDate::from_ymd_opt(2019, 10, 31)
+                        .unwrap()
+                        .and_hms_milli_opt(0, 11, 9, 329)
+                        .unwrap()
+                )
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
@@ -805,9 +882,15 @@ mod tests {
         assert_eq!(e.request_host, "labs-api.cfapps-06.slot-59.pez.vmware.com");
         assert_eq!(
             e.timestamp,
-            FixedOffset::west(0)
-                .ymd(2022, 2, 2)
-                .and_hms_nano(16, 46, 41, 401498446)
+            FixedOffset::west_opt(0)
+                .unwrap()
+                .from_local_datetime(
+                    &NaiveDate::from_ymd_opt(2022, 2, 2)
+                        .unwrap()
+                        .and_hms_nano_opt(16, 46, 41, 401498446)
+                        .unwrap()
+                )
+                .unwrap()
         );
         match e.request {
             RequestResult::Valid(req) => {
