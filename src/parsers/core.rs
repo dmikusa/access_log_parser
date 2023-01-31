@@ -60,7 +60,7 @@ pub(super) fn quoted_dash_or_str<'a, E: ParseError<&'a str> + ContextError<&'a s
 pub(super) fn digits<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, &'a str, E> {
-    context("digits", take_while(|c: char| c.is_digit(10)))(input)
+    context("digits", take_while(|c: char| c.is_ascii_digit()))(input)
 }
 
 pub(super) fn ip<'a, E>(input: &'a str) -> IResult<&'a str, IpAddr, E>
