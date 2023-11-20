@@ -12,7 +12,7 @@ categories = ["parsing", "parser-implementations"]
 
 [dependencies]
 nom = "7.1"
-http = "0.2"
+http = "1.0"
 thiserror = "1.0"
 
 [dependencies.chrono]
