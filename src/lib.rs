@@ -124,17 +124,12 @@ impl FromStr for LogType {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Default, PartialEq)]
 pub enum XForwardedProto {
+    #[default]
     HTTP,
     HTTPS,
     UNSPECIFIED,
-}
-
-impl Default for XForwardedProto {
-    fn default() -> Self {
-        XForwardedProto::HTTP
-    }
 }
 
 /// AccessLogError enumerates all possible errors returned by this library
