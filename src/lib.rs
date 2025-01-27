@@ -14,8 +14,8 @@
 mod parsers;
 
 use chrono::prelude::*;
-use nom::error::{self, VerboseError};
 use nom::Finish;
+use nom_language::error::{convert_error, VerboseError};
 use parsers::compound;
 use std::net::IpAddr;
 use std::str::FromStr;
@@ -145,7 +145,7 @@ pub fn parse(log_type: LogType, line: &str) -> Result<LogEntry, AccessLogError> 
             compound::common_log::<VerboseError<&str>>(line)
                 .finish()
                 .map_err(|e| AccessLogError::ParseError {
-                    msg: error::convert_error(line, e),
+                    msg: convert_error(line, e),
                 })?
                 .1,
         ),
@@ -153,7 +153,7 @@ pub fn parse(log_type: LogType, line: &str) -> Result<LogEntry, AccessLogError> 
             compound::combined_log::<VerboseError<&str>>(line)
                 .finish()
                 .map_err(|e| AccessLogError::ParseError {
-                    msg: error::convert_error(line, e),
+                    msg: convert_error(line, e),
                 })?
                 .1,
         ),
@@ -161,7 +161,7 @@ pub fn parse(log_type: LogType, line: &str) -> Result<LogEntry, AccessLogError> 
             compound::cloud_controller_log::<VerboseError<&str>>(line)
                 .finish()
                 .map_err(|e| AccessLogError::ParseError {
-                    msg: error::convert_error(line, e),
+                    msg: convert_error(line, e),
                 })?
                 .1,
         ),
@@ -169,7 +169,7 @@ pub fn parse(log_type: LogType, line: &str) -> Result<LogEntry, AccessLogError> 
             compound::gorouter_log::<VerboseError<&str>>(line)
                 .finish()
                 .map_err(|e| AccessLogError::ParseError {
-                    msg: error::convert_error(line, e),
+                    msg: convert_error(line, e),
                 })?
                 .1,
         ),

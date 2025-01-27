@@ -19,8 +19,8 @@ use nom::{
     character::complete::char,
     combinator::map,
     error::{context, ContextError, FromExternalError, ParseError},
-    sequence::{terminated, tuple},
-    IResult,
+    sequence::terminated,
+    IResult, Parser,
 };
 
 use crate::{parsers::core::ip, CombinedLogEntry, GorouterLogEntry};
@@ -33,7 +33,7 @@ use super::core::{
     x_forwarded_proto,
 };
 
-pub(crate) fn common_log<'a, E>(input: &'a str) -> IResult<&'a str, CommonLogEntry, E>
+pub(crate) fn common_log<'a, E>(input: &'a str) -> IResult<&'a str, CommonLogEntry<'a>, E>
 where
     E: ParseError<&'a str>
         + ContextError<&'a str>
@@ -46,7 +46,7 @@ where
     context(
         "common_log",
         map(
-            tuple((
+            (
                 terminated(ip, char(' ')),
                 terminated(idnetd_user, char(' ')),
                 terminated(user, char(' ')),
@@ -54,7 +54,7 @@ where
                 terminated(request, char(' ')),
                 terminated(http_status, char(' ')),
                 bytes,
-            )),
+            ),
             |(ip, identd_user, user, timestamp, request, status_code, bytes)| CommonLogEntry {
                 ip,
                 identd_user,
@@ -65,10 +65,11 @@ where
                 bytes,
             },
         ),
-    )(input)
+    )
+    .parse(input)
 }
 
-pub(crate) fn combined_log<'a, E>(input: &'a str) -> IResult<&'a str, CombinedLogEntry, E>
+pub(crate) fn combined_log<'a, E>(input: &'a str) -> IResult<&'a str, CombinedLogEntry<'a>, E>
 where
     E: ParseError<&'a str>
         + ContextError<&'a str>
@@ -82,11 +83,11 @@ where
     context(
         "combined_log",
         map(
-            tuple((
+            (
                 terminated(common_log, char(' ')),
                 terminated(referrer, char(' ')),
                 user_agent,
-            )),
+            ),
             |(common, referrer, user_agent)| CombinedLogEntry {
                 ip: common.ip,
                 identd_user: common.identd_user,
@@ -99,12 +100,13 @@ where
                 user_agent,
             },
         ),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(crate) fn cloud_controller_log<'a, E>(
     input: &'a str,
-) -> IResult<&'a str, CloudControllerLogEntry, E>
+) -> IResult<&'a str, CloudControllerLogEntry<'a>, E>
 where
     E: ParseError<&'a str>
         + ContextError<&'a str>
@@ -118,7 +120,7 @@ where
     context(
         "cloud_controller_log",
         map(
-            tuple((
+            (
                 terminated(take_while1(|c: char| !c.is_whitespace()), char(' ')),
                 terminated(char('-'), char(' ')),
                 terminated(date, char(' ')),
@@ -130,7 +132,7 @@ where
                 terminated(ip_list, char(' ')),
                 terminated(vcap_request_id, char(' ')),
                 response_time,
-            )),
+            ),
             |(
                 request_host,
                 _,
@@ -158,10 +160,11 @@ where
                 }
             },
         ),
-    )(input)
+    )
+    .parse(input)
 }
 
-pub(crate) fn gorouter_log<'a, E>(input: &'a str) -> IResult<&'a str, GorouterLogEntry, E>
+pub(crate) fn gorouter_log<'a, E>(input: &'a str) -> IResult<&'a str, GorouterLogEntry<'a>, E>
 where
     E: ParseError<&'a str>
         + ContextError<&'a str>
@@ -175,8 +178,8 @@ where
     context(
         "gorouter_log",
         map(
-            tuple((
-                tuple((
+            (
+                (
                     terminated(take_while1(|c: char| !c.is_whitespace()), char(' ')),
                     terminated(char('-'), char(' ')),
                     terminated(date, char(' ')),
@@ -198,12 +201,12 @@ where
                     terminated(instance_id, take_while(|c: char| c.is_whitespace())),
                     terminated(x_cf_routererror, take_while(|c: char| c.is_whitespace())),
                     terminated(x_b3_traceid, take_while(|c: char| c.is_whitespace())),
-                )),
-                tuple((
+                ),
+                (
                     terminated(x_b3_spanid, take_while(|c: char| c.is_whitespace())),
                     terminated(x_b3_parentspanid, take_while(|c: char| c.is_whitespace())),
-                )),
-            )),
+                ),
+            ),
             |(
                 (
                     request_host,
@@ -258,7 +261,8 @@ where
                 }
             },
         ),
-    )(input)
+    )
+    .parse(input)
 }
 
 #[cfg(test)]
@@ -267,7 +271,7 @@ mod tests {
 
     use chrono::{FixedOffset, NaiveDate, TimeZone};
     use http::Uri;
-    use nom::error::VerboseError;
+    use nom_language::error::VerboseError;
 
     use crate::{
         parsers::compound::{cloud_controller_log, combined_log, gorouter_log},
