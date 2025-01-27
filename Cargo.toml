@@ -11,7 +11,7 @@ keywords = ["access", "logs", "parse"]
 categories = ["parsing", "parser-implementations"]
 
 [dependencies]
-nom = "7"
+nom = "8"
 http = "1"
 thiserror = "2"
 
