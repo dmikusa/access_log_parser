@@ -22,8 +22,8 @@ use nom::{
     error::{context, ContextError, FromExternalError, ParseError},
     multi::separated_list0,
     number::complete::double,
-    sequence::{delimited, preceded, separated_pair, terminated, tuple},
-    AsChar, IResult,
+    sequence::{delimited, preceded, separated_pair, terminated},
+    AsChar, IResult, Parser,
 };
 use std::{
     net::{AddrParseError, IpAddr},
@@ -41,7 +41,8 @@ pub(super) fn dash_or_str<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
             map(tag("-"), |_| None),
             opt(take_while(|c: char| !c.is_whitespace())),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn quoted_dash_or_str<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
@@ -54,13 +55,14 @@ pub(super) fn quoted_dash_or_str<'a, E: ParseError<&'a str> + ContextError<&'a s
             alt((map(tag("-"), |_| None), opt(take_until1("\"")))),
             char('"'),
         ),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn digits<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, &'a str, E> {
-    context("digits", take_while(|c: char| c.is_ascii_digit()))(input)
+    context("digits", take_while(|c: char| c.is_ascii_digit())).parse(input)
 }
 
 pub(super) fn ip<'a, E>(input: &'a str) -> IResult<&'a str, IpAddr, E>
@@ -73,7 +75,8 @@ where
             take_while(|c: char| c.is_dec_digit() || c.is_hex_digit() || c == '.' || c == ':'),
             |out: &str| out.parse(),
         ),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn date<'a, E>(input: &'a str) -> IResult<&'a str, DateTime<FixedOffset>, E>
@@ -90,19 +93,20 @@ where
                 .or_else(|_e| DateTime::parse_from_rfc2822(d))
                 .or_else(|_e| DateTime::parse_from_rfc3339(d))
         }),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn idnetd_user<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, Option<&'a str>, E> {
-    context("idnetd_user", dash_or_str)(input)
+    context("idnetd_user", dash_or_str).parse(input)
 }
 
 pub(super) fn user<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, Option<&'a str>, E> {
-    context("user", dash_or_str)(input)
+    context("user", dash_or_str).parse(input)
 }
 
 pub(super) fn http_status<'a, E>(input: &'a str) -> IResult<&'a str, http::StatusCode, E>
@@ -117,7 +121,8 @@ where
             map(tag("\"-\""), |_| http::StatusCode::IM_A_TEAPOT),
             map_res(take_until(" "), |h: &'a str| h.parse()),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn bytes<'a, E>(input: &'a str) -> IResult<&'a str, u64, E>
@@ -132,19 +137,20 @@ where
             map(tag("-"), |_| 0),
             map_res(digits, |b: &'a str| b.parse()),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn method<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, &'a str, E> {
-    context("method", take_until(" "))(input)
+    context("method", take_until(" ")).parse(input)
 }
 
 pub(super) fn path<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
     input: &'a str,
 ) -> IResult<&'a str, &'a str, E> {
-    context("path", take_until(" "))(input)
+    context("path", take_until(" ")).parse(input)
 }
 
 pub(super) fn protocol_version<'a, E: ParseError<&'a str> + ContextError<&'a str>>(
@@ -157,10 +163,11 @@ pub(super) fn protocol_version<'a, E: ParseError<&'a str> + ContextError<&'a str
             map(tag("HTTP/1.1"), |_| http::Version::HTTP_11),
             map(tag("HTTP/2.0"), |_| http::Version::HTTP_11),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
-pub(super) fn request<'a, E>(input: &'a str) -> IResult<&'a str, RequestResult, E>
+pub(super) fn request<'a, E>(input: &'a str) -> IResult<&'a str, RequestResult<'a>, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, http::Error>,
 {
@@ -170,11 +177,11 @@ where
             delimited(
                 char('"'),
                 map(
-                    tuple((
+                    (
                         terminated(method, char(' ')),
                         terminated(path, char(' ')),
                         protocol_version,
-                    )),
+                    ),
                     |(m, p, v)| {
                         let req = http::Request::builder()
                             .method(m)
@@ -194,7 +201,8 @@ where
                 None => RequestResult::InvalidRequest(""),
             }),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn referrer<'a, E>(input: &'a str) -> IResult<&'a str, Option<http::Uri>, E>
@@ -212,14 +220,15 @@ where
                 char('"'),
             )),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn user_agent<'a, E>(input: &'a str) -> IResult<&'a str, Option<&'a str>, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str>,
 {
-    context("user_agent", quoted_dash_or_str)(input)
+    context("user_agent", quoted_dash_or_str).parse(input)
 }
 
 pub(super) fn ip_and_port<'a, E>(input: &'a str) -> IResult<&'a str, Option<(IpAddr, u16)>, E>
@@ -243,14 +252,15 @@ where
             )),
             char('"'),
         ),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn ip_list<'a, E>(input: &'a str) -> IResult<&'a str, Vec<IpAddr>, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str> + FromExternalError<&'a str, AddrParseError>,
 {
-    context("ip_list", separated_list0(is_a(", "), ip))(input)
+    context("ip_list", separated_list0(is_a(", "), ip)).parse(input)
 }
 
 pub(super) fn x_forwarded_for<'a, E>(input: &'a str) -> IResult<&'a str, Vec<IpAddr>, E>
@@ -266,7 +276,8 @@ where
                 delimited(char('"'), ip_list, char('"')),
             ),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn x_forwarded_proto<'a, E>(input: &'a str) -> IResult<&'a str, XForwardedProto, E>
@@ -286,10 +297,11 @@ where
                 _ => XForwardedProto::UNSPECIFIED,
             },
         ),
-    )(input)
+    )
+    .parse(input)
 }
 
-pub(super) fn vcap_request_id<'a, E>(input: &'a str) -> IResult<&'a str, Option<&str>, E>
+pub(super) fn vcap_request_id<'a, E>(input: &'a str) -> IResult<&'a str, Option<&'a str>, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str>,
 {
@@ -305,7 +317,8 @@ where
                 alt((quoted_dash_or_str, dash_or_str)),
             ),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn response_time<'a, E>(input: &'a str) -> IResult<&'a str, Option<f64>, E>
@@ -324,7 +337,8 @@ where
                 double,
             )),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn gorouter_time<'a, E>(input: &'a str) -> IResult<&'a str, Option<f64>, E>
@@ -343,10 +357,11 @@ where
                 double,
             )),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
-pub(super) fn app_id<'a, E>(input: &'a str) -> IResult<&'a str, Option<&str>, E>
+pub(super) fn app_id<'a, E>(input: &'a str) -> IResult<&'a str, Option<&'a str>, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str>,
 {
@@ -356,7 +371,8 @@ where
             map(alt((tag("app_id:-"), tag("app_id:\"-\""))), |_| None),
             preceded(alt((tag("app_id: "), tag("app_id:"))), quoted_dash_or_str),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 pub(super) fn app_index<'a, E>(input: &'a str) -> IResult<&'a str, Option<u16>, E>
@@ -375,10 +391,11 @@ where
                 )),
             ),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
-pub(super) fn instance_id<'a, E>(input: &'a str) -> IResult<&'a str, Option<&str>, E>
+pub(super) fn instance_id<'a, E>(input: &'a str) -> IResult<&'a str, Option<&'a str>, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str>,
 {
@@ -395,10 +412,11 @@ where
             ),
             success(None),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
-pub(super) fn x_cf_routererror<'a, E>(input: &'a str) -> IResult<&'a str, Option<&str>, E>
+pub(super) fn x_cf_routererror<'a, E>(input: &'a str) -> IResult<&'a str, Option<&'a str>, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str>,
 {
@@ -415,10 +433,11 @@ where
             ),
             success(None),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
-pub(super) fn x_b3_traceid<'a, E>(input: &'a str) -> IResult<&'a str, Option<&str>, E>
+pub(super) fn x_b3_traceid<'a, E>(input: &'a str) -> IResult<&'a str, Option<&'a str>, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str>,
 {
@@ -435,10 +454,11 @@ where
             ),
             success(None),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
-pub(super) fn x_b3_spanid<'a, E>(input: &'a str) -> IResult<&'a str, Option<&str>, E>
+pub(super) fn x_b3_spanid<'a, E>(input: &'a str) -> IResult<&'a str, Option<&'a str>, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str>,
 {
@@ -455,10 +475,11 @@ where
             ),
             success(None),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
-pub(super) fn x_b3_parentspanid<'a, E>(input: &'a str) -> IResult<&'a str, Option<&str>, E>
+pub(super) fn x_b3_parentspanid<'a, E>(input: &'a str) -> IResult<&'a str, Option<&'a str>, E>
 where
     E: ParseError<&'a str> + ContextError<&'a str>,
 {
@@ -475,15 +496,17 @@ where
             ),
             success(None),
         )),
-    )(input)
+    )
+    .parse(input)
 }
 
 #[cfg(test)]
 mod core_tests {
     use super::*;
     use chrono::{FixedOffset, NaiveDate, TimeZone};
-    use nom::error::{Error, ErrorKind, VerboseError};
+    use nom::error::{Error, ErrorKind};
     use nom::Err;
+    use nom_language::error::VerboseError;
     use std::net::{IpAddr, Ipv4Addr};
 
     #[test]
